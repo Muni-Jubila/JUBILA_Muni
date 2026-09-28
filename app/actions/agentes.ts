@@ -548,7 +548,9 @@ export async function updateJubila(
     // Rango de fechas en Otorgamiento y Renovación: la "hasta" debe ser mayor a la "desde"
     if (data.renovaciones) {
       for (const rv of data.renovaciones) {
-        if (rv.fechaDesdeExp?.trim() && rv.fechaHastaExp?.trim() && rv.fechaHastaExp.trim() <= rv.fechaDesdeExp.trim()) {
+        const desdeDate = rv.fechaDesdeExp?.trim() ? strToDate(rv.fechaDesdeExp) : null
+        const hastaDate = rv.fechaHastaExp?.trim() ? strToDate(rv.fechaHastaExp) : null
+        if (desdeDate && hastaDate && hastaDate.getTime() <= desdeDate.getTime()) {
           return {
             ok: false,
             error: 'En Otorgamiento y Renovación: la fecha "hasta" debe ser posterior a la fecha "desde".',
@@ -808,7 +810,9 @@ export async function createJubila(
     // Rango de fechas en Otorgamiento y Renovación: la "hasta" debe ser mayor a la "desde"
     if (data.renovaciones) {
       for (const rv of data.renovaciones) {
-        if (rv.fechaDesdeExp?.trim() && rv.fechaHastaExp?.trim() && rv.fechaHastaExp.trim() <= rv.fechaDesdeExp.trim()) {
+        const desdeDate = rv.fechaDesdeExp?.trim() ? strToDate(rv.fechaDesdeExp) : null
+        const hastaDate = rv.fechaHastaExp?.trim() ? strToDate(rv.fechaHastaExp) : null
+        if (desdeDate && hastaDate && hastaDate.getTime() <= desdeDate.getTime()) {
           return {
             ok: false,
             error: 'En Otorgamiento y Renovación: la fecha "hasta" debe ser posterior a la fecha "desde".',
@@ -916,10 +920,14 @@ export async function createJubila(
  */
 export async function deleteJubila(id: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    await requireAuthenticatedSession()
+    const session = await requireAuthenticatedSession()
     await prisma.jUBILA.update({
       where: { ID_JUBILA: Number(id) },
-      data: { BIT_BORRADO: true },
+      data: {
+        BIT_BORRADO: true,
+        FECHA_ULTIMA_MODIFICACION: new Date(),
+        USUARIO_MODIFICACION: session.userId,
+      },
     })
     revalidatePath('/')
     return { ok: true }
@@ -982,6 +990,10 @@ export async function getAgentesProxJubilacion(fechaDesde?: string, fechaHasta?:
           gte: inicio,
           lte: fin,
         },
+        NOT: [
+          { PROGRAMA: { contains: '950000' } },
+          { PROGRAMA: { contains: '800000' } },
+        ],
       },
       select: {
         DNI_AGENTE: true,
@@ -1204,6 +1216,10 @@ export async function getCantidadProxJubilar(): Promise<number> {
           gte: hace30Dias,
           lte: en30Dias,
         },
+        NOT: [
+          { PROGRAMA: { contains: '950000' } },
+          { PROGRAMA: { contains: '800000' } },
+        ],
       },
     })
   } catch (error) {
@@ -1327,11 +1343,19 @@ export async function deleteAgente(
     await prisma.$transaction([
       prisma.dATOS_PERSONALES_AGENTE_JUBILA.update({
         where: { ID_DATOS_PERSONALES_AGENTE_JUBILA: agenteId },
-        data: { BIT_BORRADO: true },
+        data: {
+          BIT_BORRADO: true,
+          FECHA_ULTIMA_MODIFICACION: new Date(),
+          USUARIO_ULTIMA_MODIFICACION: session.userId,
+        },
       }),
       prisma.jUBILA.updateMany({
         where: { ID_AGENTE: agenteId, BIT_BORRADO: false },
-        data: { BIT_BORRADO: true },
+        data: {
+          BIT_BORRADO: true,
+          FECHA_ULTIMA_MODIFICACION: new Date(),
+          USUARIO_MODIFICACION: session.userId,
+        },
       }),
     ])
     revalidatePath('/')
@@ -1359,11 +1383,19 @@ export async function recuperarAgente(
     await prisma.$transaction([
       prisma.dATOS_PERSONALES_AGENTE_JUBILA.update({
         where: { ID_DATOS_PERSONALES_AGENTE_JUBILA: agenteId },
-        data: { BIT_BORRADO: false },
+        data: {
+          BIT_BORRADO: false,
+          FECHA_ULTIMA_MODIFICACION: new Date(),
+          USUARIO_ULTIMA_MODIFICACION: session.userId,
+        },
       }),
       prisma.jUBILA.updateMany({
         where: { ID_AGENTE: agenteId },
-        data: { BIT_BORRADO: false },
+        data: {
+          BIT_BORRADO: false,
+          FECHA_ULTIMA_MODIFICACION: new Date(),
+          USUARIO_MODIFICACION: session.userId,
+        },
       }),
     ])
     revalidatePath('/')

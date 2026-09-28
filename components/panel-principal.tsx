@@ -14,7 +14,7 @@ import {
   type TrazabilidadEntry,
 } from '@/lib/jubilaciones-data'
 import { FormField, SelectField, SectionCard } from '@/components/form-field'
-import { formatExpediente, formatDate, formatCuil, extractDniFromCuil, getDateValidationError } from '@/lib/format-utils'
+import { formatExpediente, formatDate, formatCuil, extractDniFromCuil, getDateValidationError, isDateRangeInvalid } from '@/lib/format-utils'
 import { searchAgentes, updateJubila, createJubila, createAgente, recuperarAgente, getLastRecord } from '@/app/actions/agentes'
 import { GestorArchivos } from '@/components/gestor-archivos'
 import { PavAceptacionRechazo, PavPaseSecretaria, PavSolicitud, PavPaseArchivo, PavDesistido, PaseReparticion, RenunciaRazonesParticulares, InvalidesProvisoria, RenunciaForm, RenunciaProvisoriaForm } from '@/components/pdf/PAVForms'
@@ -48,7 +48,7 @@ function getRecordDateErrors(record: JubilacionRecord): { label: string; error: 
     check(rv.fechaDesdeExp, `Renovación #${idx + 1} - Fecha Desde`)
     check(rv.fechaHastaExp, `Renovación #${idx + 1} - Fecha Hasta`)
     // El rango es inválido si la fecha "hasta" es menor o igual a la "desde"
-    if (rv.fechaDesdeExp?.trim() && rv.fechaHastaExp?.trim() && rv.fechaHastaExp.trim() <= rv.fechaDesdeExp.trim()) {
+    if (rv.fechaDesdeExp?.trim() && rv.fechaHastaExp?.trim() && isDateRangeInvalid(rv.fechaDesdeExp, rv.fechaHastaExp)) {
       errors.push({
         label: `OTORGAMIENTO Y RENOVACIÓN #${idx + 1} - Rango de fechas`,
         error: 'La fecha "hasta" debe ser posterior a la fecha "desde".',
@@ -1411,7 +1411,7 @@ if (!selected.programa?.trim()) missing.push('• Programa')
                                 field === 'fechaHastaExp' &&
                                 rv.fechaDesdeExp?.trim() &&
                                 rv.fechaHastaExp?.trim() &&
-                                rv.fechaHastaExp.trim() <= rv.fechaDesdeExp.trim()
+                                isDateRangeInvalid(rv.fechaDesdeExp, rv.fechaHastaExp)
                               const cellErr = dateErr ?? (rangeErr ? 'Debe ser posterior a la fecha "desde"' : null)
                               return (
                                 <td key={field} className="px-1 py-1 relative">

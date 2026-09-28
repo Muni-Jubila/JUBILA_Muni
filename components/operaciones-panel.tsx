@@ -479,7 +479,7 @@ function GestionAgentes({ esAdmin = false }: { esAdmin?: boolean }) {
             placeholder="Cargo desempeñado"
           />
           <AntiguedadField
-            label="Antigüedad Recibo"
+            label="Antigüedad real"
             value={form.antiguedadRecibo ?? ''}
             onChange={(v) => update('antiguedadRecibo', v)}
           />
