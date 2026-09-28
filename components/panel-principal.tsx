@@ -95,6 +95,22 @@ function getRecordDiffs(initial: JubilacionRecord | null, current: JubilacionRec
   check('INFORMACIÓN LABORAL', 'Nº Res. Caja', 'nroResRenCaja')
   check('INFORMACIÓN LABORAL', 'Nº Exp. Caj. Deneg.', 'nroExpCajDeneg')
 
+  // Datos Personales
+  check('DATOS PERSONALES', 'CUIL', 'cuil')
+  check('DATOS PERSONALES', 'DNI', 'dni')
+  check('DATOS PERSONALES', 'Apellido y Nombres', 'apellidoNombres')
+  check('DATOS PERSONALES', 'Teléfono', 'telefono')
+  check('DATOS PERSONALES', 'Correo Electrónico', 'correo')
+  check('DATOS PERSONALES', 'Fecha de Nacimiento', 'fechaNacimiento')
+  if (String(initial.estadoActivo) !== String(current.estadoActivo)) {
+    diffs.push({
+      section: 'DATOS PERSONALES',
+      label: 'Estado',
+      oldVal: initial.estadoActivo ? 'Activo' : 'Inactivo',
+      newVal: current.estadoActivo ? 'Activo' : 'Inactivo',
+    })
+  }
+
   // Renovaciones
   current.renovaciones.forEach((rv, i) => {
     const oldRv = initial.renovaciones[i] || { nroResRenov: '', nroExpMun: '', fechaDesdeExp: '', fechaHastaExp: '', nroDcto: '' }
