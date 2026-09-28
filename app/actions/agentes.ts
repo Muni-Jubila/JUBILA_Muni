@@ -362,7 +362,7 @@ export async function searchAgentes(query: string): Promise<JubilacionRecord[]> 
       const idsExactos = await prisma.$queryRaw<{ id: number }[]>`
         SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
         FROM "DATOS_PERSONALES_AGENTE_JUBILA"
-        WHERE unaccent("APELLIDO_AGENTE") = unaccent(${q})
+        WHERE LOWER(unaccent("APELLIDO_AGENTE")) = LOWER(unaccent(${q}))
         ORDER BY "APELLIDO_AGENTE" ASC
         LIMIT 50
       `
