@@ -38,11 +38,10 @@ export const runtime = 'nodejs'
 export const maxDuration = 300
 
 // Filas por sentencia SQL en la actualización masiva.
-// SQL Server limita a 2100 parámetros por sentencia:
-//   - DP: 13 columnas + 1 parámetro → 150 filas = 1951 parámetros
-//   - CA: 3 columnas → 450 filas = 1350 parámetros
-// Cuantas menos sentencias, menos round-trips contra la DB (la transacción
-// interactiva de Prisma serializa todas las operaciones en UNA sola conexión).
+// Tamaño de lote acotado para mantener las sentencias manejables y no estirar
+// el límite de parámetros de PostgreSQL (65535). Cuantas menos sentencias,
+// menos round-trips contra la DB (la transacción interactiva de Prisma
+// serializa todas las operaciones en UNA sola conexión).
 const FILAS_SQL_DP = 150
 const FILAS_SQL_CA = 450
 
@@ -124,14 +123,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
     let caErrores = 0
 
     // ── Transacción principal (forma arreglo) ───────────────────────────────
-    // OJO: en SQL Server los $executeRaw DENTRO de prisma.$transaction(async
-    // tx => ...) NO corren sobre la conexión de la transacción (evidencia
-    // empírica: "Invalid object name '#tmp_dp'": cada ejecución raw usó otra
-    // conexión del pool y las temp tables son por-sesión). La forma arreglo
-    // $transaction([...]) envuelve TODAS las operaciones (incluidas las raw) en
-    // UNA sola transacción real, con rollback íntegro. Cada sentencia lleva su
-    // propia data (no hay estado entre statements, así que no hacen falta temp
-    // tables).
+    // La forma arreglo $transaction([...]) envuelve TODAS las operaciones
+    // (incluidas las $executeRaw) en UNA sola transacción real, con rollback
+    // íntegro ante cualquier fallo. Funciona igual con SQL Server y PostgreSQL.
     const operaciones: Prisma.PrismaPromise<unknown>[] = []
         // ────────────────────────────────────────────────────────────────────
         // PASO 1: Insertar nuevos agentes en DATOS_PERSONALES_AGENTE_JUBILA
@@ -174,12 +168,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
 
         // ────────────────────────────────────────────────────────────────────
         // PASO 2: Actualizar agentes existentes en DATOS_PERSONALES_AGENTE_JUBILA
-        // UPDATE MASIVO con CAST explícito por columna (anula la inferencia de
-        // tipos de SQL Server sobre VALUES, que con NULLs asumía `int` → P2010
-        // code 245). Una sentencia por lote; todas dentro de la $transaction
+        // UPDATE MASIVO con CAST explícito por columna (evita que el type
+        // inference de VALUES, que con NULLs puede equivocarse, rompa la
+        // asignación). Una sentencia por lote; todas dentro de la $transaction
         // arreglo → rollback íntegro ante cualquier fallo.
         // FECHAS: se pasan como texto plano 'yyyy-mm-dd' (partes UTC), sin objeto
-        // Date ni instante → SQL Server guarda literalmente la fecha del Excel,
+        // Date ni instante → la DB guarda literalmente la fecha del Excel,
         // sin conversión por zona horaria.
         // ────────────────────────────────────────────────────────────────────
         const filasDp = dp.actualizadas.map((row) => ({
@@ -204,45 +198,45 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
           for (const lote of chunk(filasDp, FILAS_SQL_DP)) {
             operaciones.push(
               prisma.$executeRaw(Prisma.sql`
-                UPDATE dATOS_PERSONALES_AGENTE_JUBILA
+                UPDATE "DATOS_PERSONALES_AGENTE_JUBILA" AS dp
                 SET
-                  NOMBRE_AGENTE = v.nombre,
-                  APELLIDO_AGENTE = v.apellido,
-                  FECHA_NACIMIENTO = v.fechaNac,
-                  SECRETARIA = v.secretaria,
-                  PROGRAMA = v.programa,
-                  CARGO = v.cargo,
-                  SEXO = v.sexo,
-                  ESTADO_ACTIVO = v.estado,
-                  CUIL = v.cuil,
-                  NUMERO_TELEFONO = v.telefono,
-                  CORREO_ELECTRONICO = v.correo,
-                  ID_REGIMEN_JUBILATORIO = v.idRegimen,
-                  FECHA_ULTIMA_MODIFICACION = GETDATE(),
-                  USUARIO_ULTIMA_MODIFICACION = ${session.userId}
+                  "NOMBRE_AGENTE" = v.nombre,
+                  "APELLIDO_AGENTE" = v.apellido,
+                  "FECHA_NACIMIENTO" = v.fechaNac,
+                  "SECRETARIA" = v.secretaria,
+                  "PROGRAMA" = v.programa,
+                  "CARGO" = v.cargo,
+                  "SEXO" = v.sexo,
+                  "ESTADO_ACTIVO" = v.estado,
+                  "CUIL" = v.cuil,
+                  "NUMERO_TELEFONO" = v.telefono,
+                  "CORREO_ELECTRONICO" = v.correo,
+                  "ID_REGIMEN_JUBILATORIO" = v.idRegimen,
+                  "FECHA_ULTIMA_MODIFICACION" = now(),
+                  "USUARIO_ULTIMA_MODIFICACION" = ${session.userId}
                 FROM (
                   VALUES ${Prisma.join(
                     lote.map(
                       (f) => Prisma.sql`(
-                        CAST(${f.dni} AS NVARCHAR(50)),
-                        CAST(${f.nombre} AS NVARCHAR(255)),
-                        CAST(${f.apellido} AS NVARCHAR(255)),
+                        CAST(${f.dni} AS TEXT),
+                        CAST(${f.nombre} AS TEXT),
+                        CAST(${f.apellido} AS TEXT),
                         CAST(${f.fechaNac} AS DATE),
-                        CAST(${f.secretaria} AS NVARCHAR(255)),
-                        CAST(${f.programa} AS NVARCHAR(255)),
-                        CAST(${f.cargo} AS NVARCHAR(255)),
-                        CAST(${f.sexo} AS NVARCHAR(50)),
-                        CAST(${f.estado} AS BIT),
-                        CAST(${f.cuil} AS NVARCHAR(20)),
-                        CAST(${f.telefono} AS NVARCHAR(50)),
-                        CAST(${f.correo} AS NVARCHAR(255)),
-                        CAST(${f.idRegimen} AS INT)
+                        CAST(${f.secretaria} AS TEXT),
+                        CAST(${f.programa} AS TEXT),
+                        CAST(${f.cargo} AS TEXT),
+                        CAST(${f.sexo} AS TEXT),
+                        CAST(${f.estado} AS BOOLEAN),
+                        CAST(${f.cuil} AS TEXT),
+                        CAST(${f.telefono} AS TEXT),
+                        CAST(${f.correo} AS TEXT),
+                        CAST(${f.idRegimen} AS INTEGER)
                       )`,
                     ),
                     ',',
                   )}
                 ) AS v(dni, nombre, apellido, fechaNac, secretaria, programa, cargo, sexo, estado, cuil, telefono, correo, idRegimen)
-                WHERE dATOS_PERSONALES_AGENTE_JUBILA.DNI_AGENTE = v.dni
+                WHERE dp."DNI_AGENTE" = v.dni
               `),
             )
           }
@@ -285,23 +279,23 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
           for (const lote of chunk(filasCa, FILAS_SQL_CA)) {
             operaciones.push(
               prisma.$executeRaw(Prisma.sql`
-                UPDATE cARRERA_ADMINISTRATIVA
+                UPDATE "CARRERA_ADMINISTRATIVA" AS c
                 SET
-                  FECHA_BAJA = v.fechaBaja,
-                  CAUSA_BAJA = v.causaBaja
+                  "FECHA_BAJA" = v.fechaBaja,
+                  "CAUSA_BAJA" = v.causaBaja
                 FROM (
                   VALUES ${Prisma.join(
                     lote.map(
                       (f) => Prisma.sql`(
-                        CAST(${f.id} AS INT),
-                        CAST(${f.fechaBaja} AS DATETIME),
-                        CAST(${f.causaBaja} AS NVARCHAR(255))
+                        CAST(${f.id} AS INTEGER),
+                        CAST(${f.fechaBaja} AS TIMESTAMP),
+                        CAST(${f.causaBaja} AS TEXT)
                       )`,
                     ),
                     ',',
                   )}
                 ) AS v(id, fechaBaja, causaBaja)
-                WHERE cARRERA_ADMINISTRATIVA.ID_CARRERA = v.id
+                WHERE c."ID_CARRERA" = v.id
               `),
             )
           }
