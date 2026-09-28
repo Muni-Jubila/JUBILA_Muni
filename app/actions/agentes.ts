@@ -357,32 +357,46 @@ export async function searchAgentes(query: string): Promise<JubilacionRecord[]> 
       return toRecords(parciales)
     } else {
       // ── Búsqueda por Apellido / Nombre ────────────────────────────────────
-      // 1º Coincidencia exacta de apellido
-      const exactos = await prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany({
-        where: { APELLIDO_AGENTE: q },
-        include: includeClause,
-        take: 50,
-      })
-      if (exactos.length > 0) return toRecords(exactos)
+      // PostgreSQL LIKE distingue mayúsculas y acentos → se usa unaccent + ILIKE
+      // 1º Coincidencia exacta de apellido (sin diferenciar mayúsculas/acentos)
+      const idsExactos = await prisma.$queryRaw<{ id: number }[]>`
+        SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
+        FROM "DATOS_PERSONALES_AGENTE_JUBILA"
+        WHERE unaccent("APELLIDO_AGENTE") = unaccent(${q})
+        ORDER BY "APELLIDO_AGENTE" ASC
+        LIMIT 50
+      `
+      if (idsExactos.length > 0) {
+        const agentesExactos = await prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany({
+          where: { ID_DATOS_PERSONALES_AGENTE_JUBILA: { in: idsExactos.map((r) => r.id) } },
+          include: includeClause,
+        })
+        const orderMap = new Map(agentesExactos.map((a) => [a.ID_DATOS_PERSONALES_AGENTE_JUBILA, a]))
+        return toRecords(
+          idsExactos.map((r) => orderMap.get(r.id)).filter((a): a is NonNullable<typeof a> => Boolean(a)),
+        )
+      }
 
-      // 2º Si no encuentra exacto, busca apellidos o nombres que contengan el texto ingresado
+      // 2º Si no encuentra exacto, apellidos o nombres que contengan el texto
+      const idsParciales = await prisma.$queryRaw<{ id: number }[]>`
+        SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
+        FROM "DATOS_PERSONALES_AGENTE_JUBILA"
+        WHERE unaccent("APELLIDO_AGENTE") ILIKE unaccent('%' || ${q} || '%')
+           OR unaccent("NOMBRE_AGENTE") ILIKE unaccent('%' || ${q} || '%')
+        ORDER BY "APELLIDO_AGENTE" ASC, "NOMBRE_AGENTE" ASC
+        LIMIT 50
+      `
       const parciales = await prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany({
-        where: {
-          OR: [
-            { APELLIDO_AGENTE: { contains: q } },
-            { NOMBRE_AGENTE: { contains: q } },
-          ],
-        },
+        where: { ID_DATOS_PERSONALES_AGENTE_JUBILA: { in: idsParciales.map((r) => r.id) } },
         include: includeClause,
-        orderBy: { APELLIDO_AGENTE: 'asc' },
-        take: 50,
       })
 
       // Priorizar los que comiencen con el texto buscado
-      const qLower = q.toLowerCase()
+      const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+      const qNorm = norm(q)
       parciales.sort((a, b) => {
-        const aStarts = (a.APELLIDO_AGENTE ?? '').toLowerCase().startsWith(qLower) ? 0 : 1
-        const bStarts = (b.APELLIDO_AGENTE ?? '').toLowerCase().startsWith(qLower) ? 0 : 1
+        const aStarts = norm(a.APELLIDO_AGENTE ?? '').startsWith(qNorm) ? 0 : 1
+        const bStarts = norm(b.APELLIDO_AGENTE ?? '').startsWith(qNorm) ? 0 : 1
         return aStarts - bStarts
       })
 
