@@ -15,7 +15,7 @@ import {
 } from '@/lib/jubilaciones-data'
 import { FormField, SelectField, SectionCard } from '@/components/form-field'
 import { formatExpediente, formatDate, formatCuil, extractDniFromCuil, getDateValidationError } from '@/lib/format-utils'
-import { searchAgentes, updateJubila, createJubila, createAgente, getLastRecord } from '@/app/actions/agentes'
+import { searchAgentes, updateJubila, createJubila, createAgente, recuperarAgente, getLastRecord } from '@/app/actions/agentes'
 import { GestorArchivos } from '@/components/gestor-archivos'
 import { PavAceptacionRechazo, PavPaseSecretaria, PavSolicitud, PavPaseArchivo, PavDesistido, PaseReparticion, RenunciaRazonesParticulares, InvalidesProvisoria, RenunciaForm, RenunciaProvisoriaForm } from '@/components/pdf/PAVForms'
 
@@ -47,6 +47,13 @@ function getRecordDateErrors(record: JubilacionRecord): { label: string; error: 
   record.renovaciones?.forEach((rv, idx) => {
     check(rv.fechaDesdeExp, `Renovación #${idx + 1} - Fecha Desde`)
     check(rv.fechaHastaExp, `Renovación #${idx + 1} - Fecha Hasta`)
+    // El rango es inválido si la fecha "hasta" es menor o igual a la "desde"
+    if (rv.fechaDesdeExp?.trim() && rv.fechaHastaExp?.trim() && rv.fechaHastaExp.trim() <= rv.fechaDesdeExp.trim()) {
+      errors.push({
+        label: `OTORGAMIENTO Y RENOVACIÓN #${idx + 1} - Rango de fechas`,
+        error: 'La fecha "hasta" debe ser posterior a la fecha "desde".',
+      })
+    }
   })
 
   return errors
@@ -319,7 +326,7 @@ export default function PanelPrincipal({ externalDni, onExternalDniConsumed }: P
       noCumpleAportesEdadAvanzada: false,
       estadoActivo: true,
       trazabilidad: [],
-      causaBaja: '1', nroTramite: '',
+      causaBaja: '', nroTramite: '',
       fBaja: '', nroExpMunRenuncia: '', jNroExpCaja: '', nroResRenCaja: '',
       nroExpCajDeneg: '', fInicExpMunPav: '', nroExpedienteMun: '',
       fInfPrevCaja: '', fecha: '', anios: '', meses: '', dias: '', edadReq: '',
@@ -404,6 +411,30 @@ export default function PanelPrincipal({ externalDni, onExternalDniConsumed }: P
         setInitialSnapshot(null)
         setForceTouchedDateErrors(false)
         setShowSuccessPopup(true)
+      } else if (result.agenteBorrado) {
+        // El DNI pertenece a un agente dado de baja → ofrecer recuperarlo
+        setShowConfirmPopup(false)
+        const recuperar = window.confirm(
+          `El documento ${result.agenteBorrado.dni} corresponde al agente "${result.agenteBorrado.apellidoNombres}", que se encuentra dado de baja. ¿Desea recuperarlo?`
+        )
+        if (recuperar) {
+          const rec = await recuperarAgente(result.agenteBorrado.idAgente)
+          if (rec.ok && rec.record) {
+            setRecords((prev) =>
+              prev.map((r) => (r.id === selected.id ? (rec.record ?? r) : r))
+            )
+            setSelectedId(rec.record.id)
+            setEditing(false)
+            setIsCreatingNew(false)
+            setInitialSnapshot(null)
+            setForceTouchedDateErrors(false)
+            setShowSuccessPopup(true)
+          } else {
+            setGlobalError(rec.error ?? 'Error al recuperar el agente.')
+          }
+        } else {
+          setGlobalError(result.error ?? 'Error al guardar el agente.')
+        }
       } else {
         setGlobalError(result.error ?? 'Error al guardar el agente.')
         setShowConfirmPopup(false)
@@ -1270,6 +1301,7 @@ if (!selected.programa?.trim()) missing.push('• Programa')
                     onChange={(v) => update('causaBaja', v)}
                     options={CAUSA_BAJA_OPTIONS}
                     disabled={roJubila}
+                    placeholder="Seleccione alguna causa de baja"
                     className="col-span-2"
                   />
                   <FormField
@@ -1375,6 +1407,12 @@ if (!selected.programa?.trim()) missing.push('• Programa')
                             ).map((field) => {
                               const isDate = field === 'fechaDesdeExp' || field === 'fechaHastaExp'
                               const dateErr = isDate && rv[field] ? getDateValidationError(rv[field], forceTouchedDateErrors) : null
+                              const rangeErr =
+                                field === 'fechaHastaExp' &&
+                                rv.fechaDesdeExp?.trim() &&
+                                rv.fechaHastaExp?.trim() &&
+                                rv.fechaHastaExp.trim() <= rv.fechaDesdeExp.trim()
+                              const cellErr = dateErr ?? (rangeErr ? 'Debe ser posterior a la fecha "desde"' : null)
                               return (
                                 <td key={field} className="px-1 py-1 relative">
                                   <input
@@ -1397,19 +1435,19 @@ if (!selected.programa?.trim()) missing.push('• Programa')
                                         ? '000.000/00'
                                         : '—'
                                     }
-                                    title={dateErr ?? undefined}
+                                    title={cellErr ?? undefined}
                                     autoComplete="off"
                                     className={`w-full rounded border px-2 py-1 text-xs transition min-w-[90px] ${
-                                      dateErr
+                                      cellErr
                                         ? 'border-rose-500 bg-rose-50/40 text-rose-900 focus:outline-none focus:ring-1 focus:ring-rose-300 focus:border-rose-600'
                                         : 'border-slate-200 bg-white text-slate-700 placeholder:text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-200 focus:border-[#1e3a8a]'
                                     } ${
                                       roJubila ? 'bg-slate-50 text-slate-500 cursor-default' : ''
                                     }`}
                                   />
-                                  {dateErr && (
-                                    <span className="block text-[9px] text-rose-600 font-bold truncate mt-0.5" title={dateErr}>
-                                      {dateErr}
+                                  {cellErr && (
+                                    <span className="block text-[9px] text-rose-600 font-bold truncate mt-0.5" title={cellErr}>
+                                      {cellErr}
                                     </span>
                                   )}
                                 </td>
