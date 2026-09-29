@@ -524,7 +524,7 @@ export async function getJubilaList(take = 50): Promise<JubilacionRecord[]> {
 export async function updateJubila(
   id: string,
   data: Partial<JubilacionRecord>,
-): Promise<{ ok: boolean; error?: string; record?: JubilacionRecord }> {
+): Promise<{ ok: boolean; error?: string; field?: string; record?: JubilacionRecord }> {
   try {
     const { userId: usuarioId } = await requireAuthenticatedSession()
     const jubilaId = Number(id)
@@ -541,7 +541,11 @@ export async function updateJubila(
         select: { ID_JUBILA: true, ID_AGENTE: true },
       })
       if (duplicado) {
-        return { ok: false, error: `El número de trámite ${data.nroTramite} ya está cargado en otro registro. Debe ser único.` }
+        return {
+          ok: false,
+          field: 'nroTramite',
+          error: `El número de trámite ${data.nroTramite} ya está cargado en otro registro. Debe ser único.`,
+        }
       }
     }
 
@@ -663,7 +667,7 @@ export interface AgenteBorradoInfo {
 export async function createAgente(
   data: Partial<JubilacionRecord>,
   idRegimen?: number | null,
-): Promise<{ ok: boolean; id?: string; error?: string; record?: JubilacionRecord; agenteBorrado?: AgenteBorradoInfo }> {
+): Promise<{ ok: boolean; id?: string; error?: string; field?: string; record?: JubilacionRecord; agenteBorrado?: AgenteBorradoInfo }> {
   try {
     const { userId: usuarioId } = await requireAuthenticatedSession()
     const dni = (data.dni ?? '').trim()
@@ -671,10 +675,10 @@ export async function createAgente(
     const sexo = (data.sexo ?? '').trim()
 
     if (!dni) {
-      return { ok: false, error: 'El DNI es obligatorio.' }
+      return { ok: false, field: 'dni', error: 'El DNI es obligatorio.' }
     }
     if (!apellidoNombres) {
-      return { ok: false, error: 'El Apellido y Nombres son obligatorios.' }
+      return { ok: false, field: 'apellidoNombres', error: 'El Apellido y Nombres son obligatorios.' }
     }
     if (sexo !== 'Masculino' && sexo !== 'Femenino') {
       return { ok: false, error: 'El Sexo debe ser Masculino o Femenino.' }
@@ -698,7 +702,7 @@ export async function createAgente(
       where: { DNI_AGENTE: dni },
     })
     if (existente && !existente.BIT_BORRADO) {
-      return { ok: false, error: `Ya existe un agente registrado con el DNI ${dni}.` }
+      return { ok: false, field: 'dni', error: `Ya existe un agente registrado con el DNI ${dni}.` }
     }
     // Existe pero fue eliminado (borrado lógico) → el cliente ofrece recuperarlo.
     if (existente && existente.BIT_BORRADO) {
@@ -759,7 +763,7 @@ export async function createAgente(
  */
 export async function createJubila(
   data: Partial<JubilacionRecord>,
-): Promise<{ ok: boolean; id?: string; error?: string; record?: JubilacionRecord; agenteBorrado?: AgenteBorradoInfo }> {
+): Promise<{ ok: boolean; id?: string; error?: string; field?: string; record?: JubilacionRecord; agenteBorrado?: AgenteBorradoInfo }> {
   try {
     const { userId: usuarioId } = await requireAuthenticatedSession()
     if (!data.dni || !data.apellidoNombres) {
@@ -803,7 +807,11 @@ export async function createJubila(
         select: { ID_JUBILA: true },
       })
       if (duplicado) {
-        return { ok: false, error: `El número de trámite ${data.nroTramite} ya está cargado en otro registro. Debe ser único.` }
+        return {
+          ok: false,
+          field: 'nroTramite',
+          error: `El número de trámite ${data.nroTramite} ya está cargado en otro registro. Debe ser único.`,
+        }
       }
     }
 
