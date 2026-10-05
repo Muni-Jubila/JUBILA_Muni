@@ -948,6 +948,24 @@ function ActualizacionMasiva() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const canAnalyze = dpFile && caFile && (flowState === 'idle' || flowState === 'ready' || flowState === 'error')
+
+  /**
+   * Vercel corta con 413 cualquier request cuyo body pase de 4,5 MB, y el
+   * export de Datos Personales con 32k agentes pesa 8,1 MB (+4,7 MB el de
+   * Carrera). Se comprime con gzip en el navegador: 8,1 MB → 1,2 MB, que sí
+   * entra. La función descomprime antes de parsear.
+   */
+  const comprimirParaEnvio = async (file: File): Promise<File> => {
+    if (typeof CompressionStream === 'undefined') return file
+    if (file.name.toLowerCase().endsWith('.gz')) return file
+    try {
+      const stream = file.stream().pipeThrough(new CompressionStream('gzip'))
+      const blob = await new Response(stream).blob()
+      return new File([blob], `${file.name}.gz`, { type: 'application/gzip' })
+    } catch {
+      return file
+    }
+  }
   const isLocked = flowState === 'analyzing' || flowState === 'committing'
 
   const handleDpFile = (f: File | null) => {
@@ -973,9 +991,11 @@ function ActualizacionMasiva() {
     setAnalysis(null)
 
     try {
+      const [dpEnviado, caEnviado] = await Promise.all([comprimirParaEnvio(dpFile), comprimirParaEnvio(caFile)])
+
       const form = new FormData()
-      form.append('datosPersonales', dpFile)
-      form.append('carreraAdministrativa', caFile)
+      form.append('datosPersonales', dpEnviado)
+      form.append('carreraAdministrativa', caEnviado)
 
       const res = await fetch('/api/bulk-sync/analyze', { method: 'POST', body: form })
       const data: AnalyzeApiResponse = await res.json()

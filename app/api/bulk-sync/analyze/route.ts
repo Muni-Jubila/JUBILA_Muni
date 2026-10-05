@@ -8,10 +8,16 @@
  *
  * Método: POST
  * Body: multipart/form-data con campos:
- *   - datosPersonales: archivo Excel
- *   - carreraAdministrativa: archivo Excel
+ *   - datosPersonales: archivo Excel (opcionalmente .gz)
+ *   - carreraAdministrativa: archivo Excel (opcionalmente .gz)
+ *
+ * Los exportes de Raet con 32k agentes pesan 8,1 MB + 4,7 MB, y Vercel corta
+ * cualquier request con body mayor a 4,5 MB (413) antes de que la función
+ * corra. Por eso el panel los manda comprimidos con gzip (1,2 MB + 0,5 MB) y
+ * acá se descomprime antes de parsear.
  */
 
+import { gunzipSync } from 'node:zlib'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import {
@@ -39,6 +45,40 @@ export const runtime = 'nodejs'
 // los 60 segundos y el panel mostraba "Error inesperado al conectar con el
 // servidor". Mismo límite que el commit.
 export const maxDuration = 300
+
+/** Límite de body de Vercel: cualquier request más grande se rechaza con 413. */
+const LIMITE_BODY_VERCEL = 4.5 * 1024 * 1024
+
+/**
+ * Lee un archivo del multipart. Si viene comprimido con gzip (el panel los
+ * manda así para no pasar el límite de 4,5 MB de Vercel) lo descomprime y
+ * devuelve el nombre original sin la extensión .gz, que es el que usan los
+ * validadores para decidir cómo parsear.
+ */
+/** Error de validación del request: se devuelve el mensaje al panel, no 500. */
+class RequestInvalidoError extends Error {}
+
+/** Quita la extensión .gz con la que el panel manda los archivos comprimidos. */
+function nombreOriginal(nombre: string): string {
+  return nombre.toLowerCase().endsWith('.gz') ? nombre.slice(0, -3) : nombre
+}
+
+async function leerArchivo(file: File): Promise<{ buffer: Buffer; nombre: string }> {
+  const comprimido = file.name.toLowerCase().endsWith('.gz')
+  const nombre = nombreOriginal(file.name)
+
+  // Si llega sin comprimir y supera el límite, es un 413 garantizado: mejor
+  // un error claro en el panel que un fallo genérico de conexión.
+  if (!comprimido && file.size > LIMITE_BODY_VERCEL) {
+    throw new RequestInvalidoError(
+      `El archivo "${file.name}" pesa ${(file.size / 1024 / 1024).toFixed(1)} MB y supera el límite de 4,5 MB por request. ` +
+        'Volvé a seleccionar el archivo para que se comprima automáticamente.',
+    )
+  }
+
+  const original = Buffer.from(await file.arrayBuffer())
+  return { buffer: comprimido ? gunzipSync(original) : original, nombre }
+}
 
 export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeApiResponse>> {
   const session = await getAuthenticatedSession()
@@ -78,19 +118,23 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeAp
     }
 
     // ── 2. Validar metadatos de archivos ──────────────────────────────────────
-    const dpMeta = validateFileMetadata(dpFile.name, dpFile.size)
+    // Con la extensión .gz (que es como los manda el panel) los validadores
+    // rechazan la extensión, así que se valida contra el nombre sin comprimir.
+    const dpNombre = nombreOriginal(dpFile.name)
+    const caNombre = nombreOriginal(caFile.name)
+    const dpMeta = validateFileMetadata(dpNombre, dpFile.size)
     if (!dpMeta.ok) {
       return NextResponse.json({ ok: false, error: dpMeta.error }, { status: 400 })
     }
-    const caMeta = validateFileMetadata(caFile.name, caFile.size)
+    const caMeta = validateFileMetadata(caNombre, caFile.size)
     if (!caMeta.ok) {
       return NextResponse.json({ ok: false, error: caMeta.error }, { status: 400 })
     }
 
-    // ── 3. Leer buffers y parsear Excel ───────────────────────────────────────
+    // ── 3. Leer buffers (descomprimiendo gzip si viene) y parsear Excel ───────
     const [dpBuffer, caBuffer] = await Promise.all([
-      dpFile.arrayBuffer().then((ab) => Buffer.from(ab)),
-      caFile.arrayBuffer().then((ab) => Buffer.from(ab)),
+      leerArchivo(dpFile).then((r) => r.buffer),
+      leerArchivo(caFile).then((r) => r.buffer),
     ])
 
     marcar('form')
@@ -224,6 +268,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeAp
     console.log('[bulk-sync/analyze] tiempos(ms):', JSON.stringify(tiempos), 'filasDP=' + dpParsed.rows.length, 'filasCA=' + caParsed.rows.length)
     return NextResponse.json({ ok: true, analysis })
   } catch (err) {
+    if (err instanceof RequestInvalidoError) {
+      return NextResponse.json({ ok: false, error: err.message }, { status: 413 })
+    }
     console.error('[bulk-sync/analyze] Error inesperado:', err)
     return NextResponse.json(
       { ok: false, error: 'Error interno del servidor. Por favor contacte al administrador.' },
