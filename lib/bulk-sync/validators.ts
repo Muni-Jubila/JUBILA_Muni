@@ -199,6 +199,15 @@ export function readExcelBuffer(buffer: Buffer): ExcelParseResult {
     const esHtml = looksLikeHtml(buffer)
     workbook = XLSX.read(esHtml ? decodeCp1252(buffer) : buffer, {
       type: esHtml ? 'string' : 'buffer',
+      // En los exportes HTML SheetJS adivina el tipo de cada celda y convierte
+      // las fechas a serial de Excel. Eso rompe las fechas ambiguas: el texto
+      // "01/02/1900" se resolvía como 02/01 y quedaba el serial 3, que luego
+      // volvía como 03/01/1900 (3.640 agentes con fecha 1900 cambiaban de
+      // fecha en cada carga). Con raw el texto queda tal cual está en el
+      // archivo y lo interpreta normalizeDate como dd/mm/aaaa.
+      // De paso conserva los ceros a la izquierda del DNI ("05455449"), que
+      // al parsearlo como número perdían el 0 inicial.
+      raw: esHtml ? true : undefined,
       cellDates: false,
       cellNF: true,
     })

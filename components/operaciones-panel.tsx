@@ -988,8 +988,14 @@ function ActualizacionMasiva() {
 
       setAnalysis(data.analysis)
       setFlowState('preview')
-    } catch {
-      setErrorMsg('Error inesperado al conectar con el servidor.')
+    } catch (err) {
+      // Si la función murió por timeout (o se cayó la red) la respuesta no llega
+      // como JSON: el catch genérico tapaba el motivo real.
+      const detalle = err instanceof Error ? ` (${err.message})` : ''
+      setErrorMsg(
+        `No se pudo completar la comunicación con el servidor${detalle}. ` +
+          'Si tarda varios minutos y vuelve a fallar, revisá los logs de la función en Vercel.',
+      )
       setFlowState('error')
     }
   }
@@ -1016,8 +1022,9 @@ function ActualizacionMasiva() {
       setCommitResult(data)
       setFlowState('done')
       window.dispatchEvent(new Event('bulk-sync-completed'))
-    } catch {
-      setErrorMsg('Error inesperado al conectar con el servidor.')
+    } catch (err) {
+      const detalle = err instanceof Error ? ` (${err.message})` : ''
+      setErrorMsg(`No se pudo completar la comunicación con el servidor${detalle}.`)
       setFlowState('error')
     }
   }
@@ -1353,13 +1360,13 @@ function ActualizacionMasiva() {
 
           {/* Estado procesando */}
           {flowState === 'analyzing' && (
-            <button disabled className="flex items-center gap-2 px-5 py-2 rounded-lg bg-[#1e3a8a] opacity-60 cursor-not-allowed text-white text-sm font-semibold">
-              <Loader2 className="w-4 h-4 animate-spin" /> Analizando...
+            <button disabled className="flex items-center gap-2 px-5 py-2 rounded-lg bg-[#1e3a8a] opacity-60 cursor-not-allowed text-white text-sm font-semibold" title="Con un export completo (32.000 agentes) el análisis tarda de 1 a 3 minutos. No cierre la página.">
+              <Loader2 className="w-4 h-4 animate-spin" /> Analizando (puede tardar varios minutos, no cierre la página)...
             </button>
           )}
           {flowState === 'committing' && (
-            <button disabled className="flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 opacity-60 cursor-not-allowed text-white text-sm font-semibold">
-              <Loader2 className="w-4 h-4 animate-spin" /> Actualizando...
+            <button disabled className="flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 opacity-60 cursor-not-allowed text-white text-sm font-semibold" title="La actualización y el recálculo de derivados tardan varios minutos. No cierre la página.">
+              <Loader2 className="w-4 h-4 animate-spin" /> Actualizando (puede tardar varios minutos, no cierre la página)...
             </button>
           )}
         </div>

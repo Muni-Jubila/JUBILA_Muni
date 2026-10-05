@@ -34,8 +34,11 @@ import type {
 import { getAuthenticatedSession } from '@/lib/auth-session'
 
 export const runtime = 'nodejs'
-// Los archivos Excel pueden ser grandes; aumentar el límite de body
-export const maxDuration = 60
+// Los archivos Excel pueden ser grandes (32k agentes): el análisis completo
+// tarda más de 60s, y con el límite default de Vercel la función se cortaba a
+// los 60 segundos y el panel mostraba "Error inesperado al conectar con el
+// servidor". Mismo límite que el commit.
+export const maxDuration = 300
 
 export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeApiResponse>> {
   const session = await getAuthenticatedSession()
@@ -48,6 +51,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeAp
 
   try {
     // ── 1. Leer archivos del form ─────────────────────────────────────────────
+    // Tiempos por etapa: con exports de 32k agentes es la única forma de saber
+    // dónde se va el tiempo cuando el análisis tarda (y se acerca al límite de
+    // la función en Vercel). Son acumulados desde el inicio de la request.
+    const t0 = Date.now()
+    const tiempos: Record<string, number> = {}
+    const marcar = (etapa: string) => {
+      tiempos[etapa] = Date.now() - t0
+    }
+
     let formData: FormData
     try {
       formData = await request.formData()
@@ -81,6 +93,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeAp
       caFile.arrayBuffer().then((ab) => Buffer.from(ab)),
     ])
 
+    marcar('form')
     const dpParsed = readExcelBuffer(dpBuffer)
     if (!dpParsed.ok) {
       return NextResponse.json({ ok: false, error: `Datos Personales: ${dpParsed.error}` }, { status: 400 })
@@ -101,6 +114,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeAp
       }, { status: 400 })
     }
 
+    marcar('leerExcel')
     const caColVal = validateCarreraColumns(caParsed.headers)
     if (!caColVal.ok) {
       return NextResponse.json({
@@ -150,6 +164,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeAp
       }),
     ])
 
+    marcar('db')
     // Construir Maps para búsqueda O(1)
     const agentesMap = new Map<string, AgenteExistente>(
       agentesDB
@@ -178,7 +193,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeAp
       if (nuevo.dni) dnisConocidos.add(nuevo.dni)
     }
 
+    marcar('analizarDP')
     const caAnalysis = analyzeCarreraAdministrativa(caParsed.rows, fasesMap, dnisConocidos)
+    marcar('analizarCA')
 
     // ── 7. Construir resultado ────────────────────────────────────────────────
     const tieneErroresCriticos =
@@ -204,6 +221,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeAp
       tieneErroresCriticos,
     }
 
+    console.log('[bulk-sync/analyze] tiempos(ms):', JSON.stringify(tiempos), 'filasDP=' + dpParsed.rows.length, 'filasCA=' + caParsed.rows.length)
     return NextResponse.json({ ok: true, analysis })
   } catch (err) {
     console.error('[bulk-sync/analyze] Error inesperado:', err)
