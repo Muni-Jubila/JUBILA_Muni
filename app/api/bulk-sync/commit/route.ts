@@ -24,7 +24,6 @@ import type {
   DpRowActualizada,
   CaRowActualizada,
 } from '@/lib/bulk-sync/types'
-import type { Prisma as PrismaClientNS } from '@prisma/client'
 import { getAuthenticatedSession } from '@/lib/auth-session'
 import {
   calcAntiguedadRecibo,
@@ -45,8 +44,10 @@ export const maxDuration = 300
 const FILAS_SQL_DP = 150
 const FILAS_SQL_CA = 450
 
-// Concurrencia acotada para el recálculo de derivados (post-commit).
-const CONCURRENCIA_RECALCULO = 50
+// Filas por sentencia en el recálculo de derivados (post-commit).
+// Lotes grandes y ejecución secuencial: el pooler de Supabase admite 15 conexiones
+// en modo sesión, así que el recálculo debe usar UNA sola a la vez.
+const FILAS_SQL_RECALCULO = 500
 
 /** Divide un array en lotes de tamaño `size`. */
 function chunk<T>(arr: readonly T[], size: number): T[][] {
@@ -387,10 +388,20 @@ async function recalcularDerivadosDeTodosLosAgentes(usuarioId: number): Promise<
     `[bulk-sync/commit] Recalculo: ${agentes.length} agentes cargados en ${((Date.now() - t0) / 1000).toFixed(1)}s`,
   )
 
-  // Consultas LAZY: solo se emiten contra la DB cuando el lote está por correrse.
-  // (Antes se llamaba prisma.update() en el loop y TODAS las consultas salían de
-  // golpe, saturando el pool de conexiones de SQL Server → timeouts P2024/P2028.)
-  const queries: (() => PrismaClientNS.PrismaPromise<unknown>)[] = []
+  // Consultas agrupadas en sentencias UPDATE ... FROM (VALUES ...) de
+  // FILAS_SQL_RECALCULO filas: una sola conexión y pocas idas y vueltas a la DB.
+  // Antes se armaba un prisma.update() por agente y se disparaban en tandas de
+  // CONCURRENCIA_RECALCULO consultas en vuelo (32.000+ updates). Con el pooler de
+  // Supabase (máx. 15 conexiones en modo sesión) eso terminaba en
+  // "FATAL: max clients reached in session mode" y el commit devolvía error.
+  const ahora = new Date()
+  const filas: {
+    id: number
+    fechaEstimada: string | null
+    edadEstimada: number | null
+    antiguedadRecibo: string | null
+    antiguedadLicencias: string | null
+  }[] = []
 
   for (const agente of agentes) {
     const fechaNacimiento = new Date(agente.FECHA_NACIMIENTO)
@@ -414,36 +425,53 @@ async function recalcularDerivadosDeTodosLosAgentes(usuarioId: number): Promise<
     const antiguedadRecibo = calcAntiguedadRecibo(fases)
     const antiguedadLicencias = calcAntiguedadLicencias(fases, fechaEstimada)
 
-    queries.push(() =>
-      prisma.dATOS_PERSONALES_AGENTE_JUBILA.update({
-        where: { ID_DATOS_PERSONALES_AGENTE_JUBILA: agente.ID_DATOS_PERSONALES_AGENTE_JUBILA },
-        data: {
-          FECHA_ESTIMADA_JUBILACI_N_ORDINARIA: fechaEstimada,
-          EDAD_ESTIMACION_JUBILACION: edadEstimada,
-          ANTIGUEDAD_RECIBO_CALC: antiguedadRecibo,
-          ANTIGUEDAD_LICENCIAS_CALC: antiguedadLicencias,
-          FECHA_ULTIMA_MODIFICACION: new Date(),
-          USUARIO_ULTIMA_MODIFICACION: usuarioId,
-        },
-      }),
-    )
+    filas.push({
+      id: agente.ID_DATOS_PERSONALES_AGENTE_JUBILA,
+      // Fecha como texto 'yyyy-mm-dd' (partes UTC): la columna es DATE y así
+      // no depende de la zona horaria de la sesión.
+      fechaEstimada: fechaEstimada ? fechaEstimada.toISOString().slice(0, 10) : null,
+      edadEstimada: edadEstimada ?? null,
+      antiguedadRecibo: antiguedadRecibo ?? null,
+      antiguedadLicencias: antiguedadLicencias ?? null,
+    })
   }
 
-  // Ejecutar por lotes concurrentes ACOTADOS: cada wing espera a terminar antes
-  // de lanzar el siguiente, manteniendo a lo sumo `CONCURRENCIA_RECALCULO`
-  // consultas en vuelo (el pool de Prisma no se ve saturado).
-  const wings = chunk(queries, CONCURRENCIA_RECALCULO)
-  for (let i = 0; i < wings.length; i++) {
-    await Promise.all(wings[i].map((q) => q()))
-    if ((i + 1) % 20 === 0) {
-      const hechas = Math.min((i + 1) * CONCURRENCIA_RECALCULO, queries.length)
+  // Una sentencia por lote, secuenciales: nunca hay más de 1 consulta en vuelo.
+  for (const lote of chunk(filas, FILAS_SQL_RECALCULO)) {
+    await prisma.$executeRaw(Prisma.sql`
+      UPDATE "DATOS_PERSONALES_AGENTE_JUBILA" AS dp
+      SET
+        "FECHA_ESTIMADA_JUBILACIÓN_ORDINARIA" = v.fechaEstimada,
+        "EDAD_ESTIMACION_JUBILACION" = v.edadEstimada,
+        "ANTIGUEDAD_RECIBO_CALC" = v.antiguedadRecibo,
+        "ANTIGUEDAD_LICENCIAS_CALC" = v.antiguedadLicencias,
+        "FECHA_ULTIMA_MODIFICACION" = now(),
+        "USUARIO_ULTIMA_MODIFICACION" = ${usuarioId}
+      FROM (
+        VALUES ${Prisma.join(
+          lote.map(
+            (f) => Prisma.sql`(
+              CAST(${f.id} AS INTEGER),
+              CAST(${f.fechaEstimada} AS DATE),
+              CAST(${f.edadEstimada} AS INTEGER),
+              CAST(${f.antiguedadRecibo} AS TEXT),
+              CAST(${f.antiguedadLicencias} AS TEXT)
+            )`,
+          ),
+          ',',
+        )}
+      ) AS v(id, fechaEstimada, edadEstimada, antiguedadRecibo, antiguedadLicencias)
+      WHERE dp."ID_DATOS_PERSONALES_AGENTE_JUBILA" = v.id
+    `)
+    const hechas = Math.min(filas.indexOf(lote[lote.length - 1]) + 1, filas.length)
+    if (hechas % (FILAS_SQL_RECALCULO * 20) === 0 || hechas === filas.length) {
       console.log(
-        `[bulk-sync/commit] Recalculo: ${hechas}/${queries.length} agentes en ${((Date.now() - t0) / 1000).toFixed(1)}s`,
+        `[bulk-sync/commit] Recalculo: ${hechas}/${filas.length} agentes en ${((Date.now() - t0) / 1000).toFixed(1)}s`,
       )
     }
   }
 
   console.log(
-    `[bulk-sync/commit] Recalculo finalizado: ${queries.length} agentes en ${((Date.now() - t0) / 1000).toFixed(1)}s`,
+    `[bulk-sync/commit] Recalculo finalizado: ${filas.length} agentes en ${((Date.now() - t0) / 1000).toFixed(1)}s`,
   )
 }

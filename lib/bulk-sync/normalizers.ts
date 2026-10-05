@@ -35,10 +35,12 @@ export function cleanImportedText(value: unknown): string {
     .replace(/я/g, 'ÑO')
     .replace(/с/g, 'ÑA')
     .replace(/ӎ/g, 'ÓN')
-    .replace(/б/g, '°')
     .replace(/�/g, '')
     .replace(/д/g, '°')
-    .replace(/[^\x00-\x7FÁÉÍÓÚÜÑáéíóúüñ]/g, '')
+    // Se conservan guion, apóstrofe, punto, coma,Degree, # y parentheses: son
+    // parte de nombres reales (MARIA-JOSE, GOMEZ-ORTIZ, DEL C., O'BRIEN, N°)
+    // y antes se perdían al limpiar.
+    .replace(/[^\x00-\x7FÁÉÍÓÚÜÑáéíóúüñ°'’.,()#/-]/g, '')
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
