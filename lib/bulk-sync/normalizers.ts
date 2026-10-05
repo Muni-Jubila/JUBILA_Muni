@@ -37,7 +37,7 @@ export function cleanImportedText(value: unknown): string {
     .replace(/ӎ/g, 'ÓN')
     .replace(/�/g, '')
     .replace(/д/g, '°')
-    // Se conservan guion, apóstrofe, punto, coma,Degree, # y parentheses: son
+    // Se conservan guion, apóstrofe, punto, coma, grado, # y paréntesis: son
     // parte de nombres reales (MARIA-JOSE, GOMEZ-ORTIZ, DEL C., O'BRIEN, N°)
     // y antes se perdían al limpiar.
     .replace(/[^\x00-\x7FÁÉÍÓÚÜÑáéíóúüñ°'’.,()#/-]/g, '')
@@ -458,4 +458,95 @@ export function normStr(v: unknown): string {
  */
 export function eqEmpty(a: unknown, b: unknown): boolean {
   return !toStr(a) && !toStr(b)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Nombres compuestos: segundo nombre / segundo apellido
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Quita de `principal` el sufijo que ya está contenido en `sufijo`.
+ *
+ * Caso real: el Excel exportado trae el nombre completo en la columna
+ * NOMBRE_AGENTE ("MONICA DEL VALLE") y además el segundo nombre en su propia
+ * columna ("DEL VALLE"). Sin separar el sufijo, el nombre quedaría duplicado
+ * ("MONICA DEL VALLE DEL VALLE") y el guardado sería incorrecto.
+ *
+ * Reglas:
+ * - Solo separa si `principal` termina con `sufijo` (comparación semántica:
+ *   ignora acentos, mayúsculas y signos).
+ * - No separa si `principal` es igual a `sufijo`: en ese caso el valor se
+ *   conserva íntegro en el primer campo.
+ */
+export function separarSufijo(principal: string, sufijo: string): string {
+  const p = String(principal ?? '').trim()
+  const s = String(sufijo ?? '').trim()
+  if (!p || !s) return p
+
+  const kp = normStr(p)
+  const ks = normStr(s)
+  if (!ks || !kp.endsWith(ks)) return p
+
+  const partes = p.split(/\s+/)
+  const partesSufijo = s.split(/\s+/)
+  // No dejar el primero sin contenido: "DEL VALLE" no se parte en "".
+  if (partes.length <= partesSufijo.length) return p
+
+  return partes.slice(0, partes.length - partesSufijo.length).join(' ')
+}
+
+/**
+ * Reconcilia el par (primer campo, segundo campo) de un Excel:
+ * - Si el segundo campo está vacío → se conserva el valor actual de la DB.
+ * - Si el primer campo ya contiene al segundo → se separa (el Excel trajo el
+ *   nombre completo en la columna del primer campo).
+ * - Si ambos traen exactamente el mismo texto → queda solo en el primero.
+ *
+ * @returns [valorPrimero, valorSegundo]
+ */
+export function reconciliarPar(
+  valorPrimero: string,
+  valorSegundo: string,
+  actualPrimero: string | null | undefined,
+  actualSegundo: string | null | undefined,
+): [string, string] {
+  let primero = String(valorPrimero ?? '').trim()
+  let segundo = String(valorSegundo ?? '').trim()
+
+  if (!primero && actualPrimero) primero = String(actualPrimero).trim()
+  if (!segundo && actualSegundo) segundo = String(actualSegundo).trim()
+
+  // Ambos idénticos → el segundo es redundante.
+  if (primero && segundo && normStr(primero) === normStr(segundo)) segundo = ''
+
+  // El primero ya trae al segundo dentro (Excel con nombre completo).
+  if (primero && segundo) primero = separarSufijo(primero, segundo)
+
+  // Caso inverso: el segundo trae al primero (a veces pasa con partículas).
+  if (primero && segundo) segundo = separarSufijo(segundo, primero)
+
+  return [primero, segundo]
+}
+
+/**
+ * Compone el nombre completo para mostrar en la UI:
+ * APELLIDO [2º APELLIDO] NOMBRE [2º NOMBRE], sin duplicar segmentos y sin
+ * inventar separadores dobles.
+ */
+export function componerNombreCompleto(datos: {
+  apellido?: string | null
+  segundoApellido?: string | null
+  nombre?: string | null
+  segundoNombre?: string | null
+}): string {
+  const partes: string[] = []
+  for (const bruto of [datos.apellido, datos.segundoApellido, datos.nombre, datos.segundoNombre]) {
+    const valor = String(bruto ?? '').trim()
+    if (!valor) continue
+    // Evitar el mismo texto dos veces seguidas (p.ej. 2º apellido = apellido).
+    const clave = normStr(valor)
+    if (partes.length && normStr(partes[partes.length - 1]) === clave) continue
+    partes.push(valor)
+  }
+  return partes.join(' ')
 }

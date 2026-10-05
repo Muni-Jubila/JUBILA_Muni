@@ -260,3 +260,91 @@ export function getCol(row: Record<string, unknown>, colName: string): unknown {
 
   return ''
 }
+
+/**
+ * Reduce un nombre de columna a una clave comparable: sin acentos, sin
+ * mayúsculas/minúsculas y sin espacios, signos ni símbolos.
+ * "Segundo N° Apellido Agente" y "SEGUNDO_APELLIDO_AGENTE" dan la misma clave.
+ */
+export function claveColumna(header: string): string {
+  return header
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+}
+
+/**
+ * Alias aceptados para los campos de nombre. Los Excel exportados por distintos
+ * orígenes usan variantes ("SEGUNDO_NOMBRE", "2° NOMBRE", "SEGUNDO NOMBRE
+ * AGENTE"), y antes esas columnas se ignoraban en silencio: los cambios de
+ * segundo nombre/apellido no llegaban a verse en el análisis.
+ */
+export const ALIAS_NOMBRE = ['NOMBRE', 'NOMBRE AGENTE', 'NOMBRES']
+export const ALIAS_APELLIDO = ['APELLIDO', 'APELLIDOS', 'APELLIDO AGENTE']
+export const ALIAS_SEGUNDO_NOMBRE = [
+  'SEGUNDO_NOMBRE',
+  'SEGUNDO NOMBRE AGENTE',
+  'SEGUNDO NOMBRE 1',
+  'SEGUNDO N° NOMBRE',
+  '2° NOMBRE',
+  '2 NOMBRE',
+  'NOMBRE 2',
+  'NOMBRE SECUNDARIO',
+]
+export const ALIAS_SEGUNDO_APELLIDO = [
+  'SEGUNDO_APELLIDO',
+  'SEGUNDO APELLIDO AGENTE',
+  'SEGUNDO APELLIDO 1',
+  'SEGUNDO N° APELLIDO',
+  '2° APELLIDO',
+  '2 APELLIDO',
+  'APELLIDO 2',
+  'APELLIDO SECUNDARIO',
+]
+
+/**
+ * Igual que getCol pero tolerante a variantes del encabezado:
+ * 1) coincidencia exacta
+ * 2) case-insensitive
+ * 3) clave normalizada (ignora acentos, espacios, "_", "°", etc.)
+ *
+ * Entre las variantes se elige la primera con valor. Si el archivo tiene la
+ * columna "SEGUNDO_NOMBRE_AGENTE" vacía pero trae el dato en "SEGUNDO NOMBRE",
+ * se usa la que tiene contenido: antes el dato se perdía en silencio.
+ * Si ninguna existe devuelve ''.
+ */
+export function getColFlexible(
+  row: Record<string, unknown>,
+  colName: string,
+  alias: string[] = [],
+): unknown {
+  const candidatas = [colName, ...alias]
+  const claves = Object.keys(row)
+  const vistos = new Set<string>()
+  const valores: unknown[] = []
+
+  const recolectar = (compararNormalizado: boolean) => {
+    for (const col of candidatas) {
+      const objetivo = compararNormalizado ? claveColumna(col) : col.toUpperCase()
+      if (!objetivo) continue
+      for (const key of claves) {
+        if (vistos.has(key)) continue
+        const coincide = compararNormalizado
+          ? claveColumna(key) === objetivo
+          : key.toUpperCase() === objetivo
+        if (!coincide) continue
+        vistos.add(key)
+        valores.push(row[key])
+      }
+    }
+  }
+
+  recolectar(false)
+  recolectar(true)
+
+  for (const valor of valores) {
+    if (valor !== '' && valor !== null && valor !== undefined) return valor
+  }
+  return valores.length ? valores[0] : ''
+}
