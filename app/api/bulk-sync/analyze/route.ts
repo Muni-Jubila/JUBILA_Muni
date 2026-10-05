@@ -126,6 +126,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeAp
           ID_REGIMEN_JUBILATORIO: true,
           NOMBRE_AGENTE: true,
           APELLIDO_AGENTE: true,
+          SEGUNDO_NOMBRE_AGENTE: true,
+          SEGUNDO_APELLIDO_AGENTE: true,
           FECHA_NACIMIENTO: true,
           SECRETARIA: true,
           PROGRAMA: true,

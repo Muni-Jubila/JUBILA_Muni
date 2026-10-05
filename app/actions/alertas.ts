@@ -53,7 +53,7 @@ export async function getAlertasInvalidezProvisoria(): Promise<AlertaInvalidezPr
       Prisma.sql`
       SELECT
         d."DNI_AGENTE" AS "DNI_AGENTE",
-        (d."APELLIDO_AGENTE" || ', ' || d."NOMBRE_AGENTE") AS "NOMBRE_COMPLETO",
+        (d."APELLIDO_AGENTE" || COALESCE(' ' || d."SEGUNDO_APELLIDO_AGENTE", '') || ', ' || d."NOMBRE_AGENTE" || COALESCE(' ' || d."SEGUNDO_NOMBRE_AGENTE", '')) AS "NOMBRE_COMPLETO",
         d."CARGO" AS "CARGO",
         d."PROGRAMA" AS "PROGRAMA",
         o."FECHA_DESDE_PROVISORIA" AS "FECHA_DESDE_PROVISORIA",

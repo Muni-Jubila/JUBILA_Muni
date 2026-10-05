@@ -80,7 +80,8 @@ export function analyzeDatosPersonales(
   const textoExistente: string[] = []
   for (const ex of existentes.values()) {
     for (const valor of [
-      ex.NOMBRE_AGENTE, ex.APELLIDO_AGENTE, ex.SECRETARIA, ex.PROGRAMA,
+      ex.NOMBRE_AGENTE, ex.SEGUNDO_NOMBRE_AGENTE, ex.APELLIDO_AGENTE, ex.SEGUNDO_APELLIDO_AGENTE,
+      ex.SECRETARIA, ex.PROGRAMA,
       ex.CARGO, ex.CORREO_ELECTRONICO, ex.NUMERO_TELEFONO,
     ]) {
       if (typeof valor === 'string' && valor.trim()) textoExistente.push(valor)
@@ -201,7 +202,9 @@ export function analyzeDatosPersonales(
       return repaired || actual || ''
     }
     const nombre = preserveText(getCol(row, 'NOMBRE_AGENTE'), existente?.NOMBRE_AGENTE)
+    const segundoNombre = preserveText(getCol(row, 'SEGUNDO_NOMBRE_AGENTE'), existente?.SEGUNDO_NOMBRE_AGENTE)
     const apellido = preserveText(getCol(row, 'APELLIDO_AGENTE'), existente?.APELLIDO_AGENTE)
+    const segundoApellido = preserveText(getCol(row, 'SEGUNDO_APELLIDO_AGENTE'), existente?.SEGUNDO_APELLIDO_AGENTE)
     const secretaria = preserveText(getCol(row, 'SECRETARIA'), existente?.SECRETARIA) || null
     const programa = preserveText(getCol(row, 'PROGRAMA'), existente?.PROGRAMA) || null
     const cargo = preserveText(getCol(row, 'CARGO'), existente?.CARGO) || null
@@ -223,7 +226,9 @@ export function analyzeDatosPersonales(
         kind: 'insert',
         dni,
         nombre,
+        segundoNombre,
         apellido,
+        segundoApellido,
         secretaria: secretaria ?? '',
         programa: programa ?? '',
         cargo: cargo ?? '',
@@ -253,7 +258,9 @@ export function analyzeDatosPersonales(
     }
 
     check('NOMBRE_AGENTE', normStr(existenteActual.NOMBRE_AGENTE), normStr(nombre))
+    check('SEGUNDO_NOMBRE_AGENTE', normStr(existenteActual.SEGUNDO_NOMBRE_AGENTE), normStr(segundoNombre))
     check('APELLIDO_AGENTE', normStr(existenteActual.APELLIDO_AGENTE), normStr(apellido))
+    check('SEGUNDO_APELLIDO_AGENTE', normStr(existenteActual.SEGUNDO_APELLIDO_AGENTE), normStr(segundoApellido))
     check('FECHA_NACIMIENTO', dateToStr(existenteActual.FECHA_NACIMIENTO), dateToStr(fechaNac))
     check('SECRETARIA', normStr(existenteActual.SECRETARIA), normStr(secretaria))
     check('PROGRAMA', normStr(existenteActual.PROGRAMA), normStr(programa))
@@ -283,12 +290,14 @@ export function analyzeDatosPersonales(
       actualizadas.push({
         kind: 'update',
         dni,
-        nombre: `${apellido} ${nombre}`.trim(),
+        nombre: `${apellido} ${segundoApellido} ${nombre} ${segundoNombre}`.replace(/\s+/g, ' ').trim(),
         apellido,
         diffs,
         payload: {
           NOMBRE_AGENTE: nombre,
+          SEGUNDO_NOMBRE_AGENTE: segundoNombre || null,
           APELLIDO_AGENTE: apellido,
+          SEGUNDO_APELLIDO_AGENTE: segundoApellido || null,
           FECHA_NACIMIENTO: fechaNac.toISOString(),
           SECRETARIA: secretaria,
           PROGRAMA: programa,

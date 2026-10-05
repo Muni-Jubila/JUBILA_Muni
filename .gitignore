@@ -17,3 +17,4 @@ node_modules
 .DS_Store
 dev-server.log
 dev-server-error.log
+muni-dev.log

@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { createAgente, searchAgentes, updateAgenteDatos, deleteAgente, recuperarAgente, getRegimenes, getRegimenDeAgente, type RegimenOption } from '@/app/actions/agentes'
 import { FormField, SelectField } from '@/components/form-field'
-import { formatCuil, extractDniFromCuil } from '@/lib/format-utils'
+import { formatCuil, extractDniFromCuil, composeFullName } from '@/lib/format-utils'
 import type { JubilacionRecord } from '@/lib/jubilaciones-data'
 import type { AnalysisResult, AnalyzeApiResponse, CommitApiResponse } from '@/lib/bulk-sync/types'
 
@@ -62,7 +62,9 @@ function AntiguedadField({ label, value, onChange }: { label: string; value: str
 function GestionAgentes({ esAdmin = false }: { esAdmin?: boolean }) {
   // ── Estado del formulario ────────────────────────────────────────────────
   const emptyForm = (): Partial<JubilacionRecord> => ({
-    cuil: '', dni: '', apellidoNombres: '', sexo: '', estadoActivo: true, telefono: '',
+    cuil: '', dni: '', apellidoNombres: '',
+    nombre: '', segundoNombre: '', apellido: '', segundoApellido: '',
+    sexo: '', estadoActivo: true, telefono: '',
     correo: '', fechaNacimiento: '', edadActual: '',
     programa: '', secretaria: '', cargo: '',
     antiguedadRecibo: '', antiguedadLicencias: '',
@@ -111,6 +113,18 @@ function GestionAgentes({ esAdmin = false }: { esAdmin?: boolean }) {
   const update = (field: keyof JubilacionRecord, value: string) =>
     setForm((prev) => ({ ...prev, [field]: value }))
 
+  /**
+   * Actualiza una de las 4 partes del nombre y recompone el nombre completo
+   * con el orden APELLIDO [2º APELLIDO] NOMBRE [2º NOMBRE].
+   */
+  const updateNombre = (
+    field: 'apellido' | 'segundoApellido' | 'nombre' | 'segundoNombre',
+    value: string,
+  ) => setForm((prev) => {
+    const next = { ...prev, [field]: value }
+    return { ...next, apellidoNombres: composeFullName(next) }
+  })
+
   const handleCuilChange = (raw: string) => {
     const cuil = formatCuil(raw)
     const dni = extractDniFromCuil(raw)
@@ -134,6 +148,10 @@ function GestionAgentes({ esAdmin = false }: { esAdmin?: boolean }) {
       cuil: agente.cuil,
       dni: agente.dni,
       apellidoNombres: agente.apellidoNombres,
+      nombre: agente.nombre,
+      segundoNombre: agente.segundoNombre,
+      apellido: agente.apellido,
+      segundoApellido: agente.segundoApellido,
       sexo: agente.sexo,
       estadoActivo: agente.estadoActivo,
       telefono: agente.telefono,
@@ -163,7 +181,8 @@ function GestionAgentes({ esAdmin = false }: { esAdmin?: boolean }) {
     setFormError(null)
     setFormSuccess(null)
     if (!form.dni) { setFormError('El DNI es obligatorio.'); return }
-    if (!form.apellidoNombres) { setFormError('El Apellido y Nombres son obligatorios.'); return }
+    if (!form.apellido?.trim()) { setFormError('El Apellido es obligatorio.'); return }
+    if (!form.nombre?.trim()) { setFormError('El Nombre es obligatorio.'); return }
     if (!form.sexo) { setFormError('Debe seleccionar el Sexo.'); return }
     if (!regimenId) { setFormError('Debe seleccionar el Régimen Jubilatorio.'); return }
 
@@ -186,6 +205,10 @@ function GestionAgentes({ esAdmin = false }: { esAdmin?: boolean }) {
           cuil: form.cuil ?? '',
           dni: form.dni ?? '',
           apellidoNombres: form.apellidoNombres ?? '',
+          nombre: form.nombre ?? '',
+          segundoNombre: form.segundoNombre ?? '',
+          apellido: form.apellido ?? '',
+          segundoApellido: form.segundoApellido ?? '',
           sexo: form.sexo ?? '',
           estadoActivo: form.estadoActivo ?? true,
           telefono: form.telefono ?? '',
@@ -394,11 +417,31 @@ function GestionAgentes({ esAdmin = false }: { esAdmin?: boolean }) {
             placeholder="Número de DNI"
           />
           <FormField
-            label="Apellido y Nombres"
-            value={form.apellidoNombres ?? ''}
-            onChange={(v) => update('apellidoNombres', v)}
-            placeholder="Apellido y Nombres"
-            className="col-span-2"
+            label="Apellido"
+            value={form.apellido ?? ''}
+            onChange={(v) => updateNombre('apellido', v)}
+            placeholder="Apellido"
+            mask="letters"
+          />
+          <FormField
+            label="2º Apellido"
+            value={form.segundoApellido ?? ''}
+            onChange={(v) => updateNombre('segundoApellido', v)}
+            placeholder="Opcional"
+            mask="letters"
+          />
+          <FormField
+            label="Nombre"
+            value={form.nombre ?? ''}
+            onChange={(v) => updateNombre('nombre', v)}
+            placeholder="Nombre"
+            mask="letters"
+          />
+          <FormField
+            label="2º Nombre"
+            value={form.segundoNombre ?? ''}
+            onChange={(v) => updateNombre('segundoNombre', v)}
+            placeholder="Opcional"
             mask="letters"
           />
           <SelectField
