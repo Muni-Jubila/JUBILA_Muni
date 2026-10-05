@@ -25,18 +25,25 @@ function removeAccents(s: string): string {
 }
 
 /**
- * Repara los caracteres que aparecen en los XLS antiguos exportados con una
- * tabla de caracteres incorrecta. Los valores no recuperables (U+FFFD) se
- * eliminan para que nunca vuelvan a guardarse como rombos en la DB.
+ * Repara los caracteres que aparecen en los exportes de Raet con la tabla de
+ * caracteres corrida. Son bytes de latin1 que en el archivo original
+ * representarían eñes y tildes, y que sin esta reparación se perdían al
+ * limpiar (la eñe desaparecía del todo):
+ *   0xA6 ¦ → Ñ    MA¦EZ    → MAÑEZ
+ *   0xD0 Ð → Ñ    NIÐEZ    → NIÑEZ
+ *   0xB4 ´ → '    D´ANGELO → D'ANGELO
+ *   0xCC Ì → Í    ITATÌ    → ITATÍ
+ *
+ * Los valores no recuperables (U+FFFD) se eliminan para que nunca vuelvan a
+ * guardarse como rombos en la DB.
  */
 export function cleanImportedText(value: unknown): string {
   return toStr(value)
-    .replace(/х/g, 'ÑE')
-    .replace(/я/g, 'ÑO')
-    .replace(/с/g, 'ÑA')
-    .replace(/ӎ/g, 'ÓN')
+    .replace(/¦/g, 'Ñ')
+    .replace(/Ð/g, 'Ñ')
+    .replace(/´/g, "'")
+    .replace(/Ì/g, 'Í')
     .replace(/�/g, '')
-    .replace(/д/g, '°')
     // Se conservan guion, apóstrofe, punto, coma, grado, # y paréntesis: son
     // parte de nombres reales (MARIA-JOSE, GOMEZ-ORTIZ, DEL C., O'BRIEN, N°)
     // y antes se perdían al limpiar.

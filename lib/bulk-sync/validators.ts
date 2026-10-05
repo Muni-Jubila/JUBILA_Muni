@@ -130,6 +130,50 @@ export function validateFileMetadata(
 // Lectura del buffer
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Tabla del rango C1 (0x80-0x9F) de Windows-1252. */
+const CP1252_HIGH = [
+  0x20ac, 0x0081, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021,
+  0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008d, 0x017d, 0x008f,
+  0x0090, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
+  0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x009d, 0x017e, 0x0178,
+]
+
+/**
+ * Detecta si el "Excel" es en realidad una tabla HTML.
+ *
+ * Los exportes del sistema Raet llegan con extensión .xls pero son HTML
+ * (doctype + <table>). SheetJS los acepta, así que el problema no es que los
+ * rechace: es que los decodifica como UTF-8 y rompe las tildes y la Ñ.
+ */
+export function looksLikeHtml(buffer: Buffer): boolean {
+  const head = buffer.subarray(0, 2048).toString('latin1')
+  return /<html|<table|<!doctype\s+html/i.test(head)
+}
+
+/**
+ * Decodifica un buffer Windows-1252 a string.
+ *
+ * Los exports de Raet declaran `charset=iso-8859-1` pero escriben los bytes de
+ * Windows-1252 (0xD1 = Ñ, 0xB0 = °, 0x92 = ’). Al decodificar como UTF-8, el
+ * 0xD1 se toma como byte inicial de una secuencia de 2 bytes y se come la
+ * letra siguiente: "MONSEÑOR" Terminaba como "MONSEяR" (la Ñ como cirílico y la
+ * O desaparecida). Decodificar con cp1252 devuelve el texto exacto.
+ */
+export function decodeCp1252(buffer: Buffer): string {
+  let out = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < buffer.length; i += CHUNK) {
+    const slice = buffer.subarray(i, i + CHUNK)
+    let s = ''
+    for (let j = 0; j < slice.length; j++) {
+      const b = slice[j]
+      s += b >= 0x80 && b <= 0x9f ? String.fromCharCode(CP1252_HIGH[b - 0x80]) : String.fromCharCode(b)
+    }
+    out += s
+  }
+  return out
+}
+
 /**
  * Lee un Buffer de Excel y devuelve headers + filas.
  *
@@ -150,7 +194,14 @@ export function validateFileMetadata(
 export function readExcelBuffer(buffer: Buffer): ExcelParseResult {
   let workbook: XLSX.WorkBook
   try {
-    workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false, cellNF: true })
+    // Los exports de Raet son HTML con extensión .xls y bytes cp1252: hay que
+    // decodificarlos a mano para no perder tildes ni Ñ (ver decodeCp1252).
+    const esHtml = looksLikeHtml(buffer)
+    workbook = XLSX.read(esHtml ? decodeCp1252(buffer) : buffer, {
+      type: esHtml ? 'string' : 'buffer',
+      cellDates: false,
+      cellNF: true,
+    })
   } catch {
     return { ok: false, headers: [], rows: [], error: 'El archivo Excel está corrupto o tiene un formato no compatible.' }
   }
