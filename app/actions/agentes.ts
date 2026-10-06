@@ -295,6 +295,65 @@ function mapAgenteToRecord(agente: AgenteBase): JubilacionRecord {
 
 // ── Server Actions ────────────────────────────────────────────────────────────
 
+// ── Helpers de búsqueda (compartidos por searchAgentes y buscarAgentesParaGrilla) ──
+
+// Includes necesarios para armar un JubilacionRecord completo desde un agente.
+const includeClause = {
+  JUBILA: {
+    where: { BIT_BORRADO: false },
+    orderBy: { FECHA_INICIO_CREACION_JUBILA: 'desc' as const },
+    take: 1,
+    include: {
+      HISTORIAL_CAUSA_BAJA: {
+        include: { CAUSA_BAJA: true },
+        orderBy: { FECHA_DESDE_CAUSA_BAJA: 'asc' as const },
+      },
+      OTORGAMIENTO_RENOVACION_PROVISORIAS: {
+        orderBy: { ID_OTORGAMIENTO_RENOVACION_PROVISORIAS: 'asc' as const },
+      },
+    },
+  },
+  REGIMEN_JUBILATORIO: true as const,
+  CARRERA_ADMINISTRATIVA: {
+    orderBy: { FECHA_ALTA: 'asc' as const },
+  },
+}
+
+// Mapea un agente (con sus includes) a JubilacionRecord.
+function toRecords(agentes: Awaited<ReturnType<typeof prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany<{ include: typeof includeClause }>>>): JubilacionRecord[] {
+  const records: JubilacionRecord[] = []
+  for (const agente of agentes) {
+    const { JUBILA: jubilaList, ...agenteRest } = agente
+    const jubila = jubilaList[0]
+    if (jubila) {
+      records.push(mapJubilaToRecord({ ...jubila, DATOS_PERSONALES_AGENTE_JUBILA: agenteRest }))
+    } else {
+      records.push(mapAgenteToRecord(agenteRest))
+    }
+  }
+  return records
+}
+
+type FilaAgente = Awaited<ReturnType<typeof prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany<{ include: typeof includeClause }>>>[number]
+
+/**
+ * Une la pasada exacta con la parcial sin repetir agentes.
+ * `prioridad` asigna el orden de la grilla: cuanto más chico, más arriba.
+ */
+function combinarFilas(exactos: FilaAgente[], parciales: FilaAgente[], prioridad: (fila: FilaAgente) => number): FilaAgente[] {
+  const porId = new Map<number, FilaAgente>()
+  for (const fila of [...parciales, ...exactos]) {
+    porId.set(fila.ID_DATOS_PERSONALES_AGENTE_JUBILA, fila)
+  }
+  return [...porId.values()].sort((a, b) => {
+    const dif = prioridad(a) - prioridad(b)
+    if (dif !== 0) return dif
+    const ap = (a.APELLIDO_AGENTE ?? '').localeCompare(b.APELLIDO_AGENTE ?? '')
+    if (ap !== 0) return ap
+    return (a.NOMBRE_AGENTE ?? '').localeCompare(b.NOMBRE_AGENTE ?? '')
+  })
+}
+
 /**
  * Busca agentes por DNI o apellido con prioridad:
  * - Si el query es numérico (DNI):
@@ -307,42 +366,6 @@ function mapAgenteToRecord(agente: AgenteBase): JubilacionRecord {
  */
 export async function searchAgentes(query: string): Promise<JubilacionRecord[]> {
   const q = query.trim()
-
-  // Helper para mapear un agente (con sus includes) a JubilacionRecord
-  const includeClause = {
-    JUBILA: {
-      where: { BIT_BORRADO: false },
-      orderBy: { FECHA_INICIO_CREACION_JUBILA: 'desc' as const },
-      take: 1,
-      include: {
-        HISTORIAL_CAUSA_BAJA: {
-          include: { CAUSA_BAJA: true },
-          orderBy: { FECHA_DESDE_CAUSA_BAJA: 'asc' as const },
-        },
-        OTORGAMIENTO_RENOVACION_PROVISORIAS: {
-          orderBy: { ID_OTORGAMIENTO_RENOVACION_PROVISORIAS: 'asc' as const },
-        },
-      },
-    },
-    REGIMEN_JUBILATORIO: true as const,
-    CARRERA_ADMINISTRATIVA: {
-      orderBy: { FECHA_ALTA: 'asc' as const },
-    },
-  }
-
-  function toRecords(agentes: Awaited<ReturnType<typeof prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany<{ include: typeof includeClause }>>>): JubilacionRecord[] {
-    const records: JubilacionRecord[] = []
-    for (const agente of agentes) {
-      const { JUBILA: jubilaList, ...agenteRest } = agente
-      const jubila = jubilaList[0]
-      if (jubila) {
-        records.push(mapJubilaToRecord({ ...jubila, DATOS_PERSONALES_AGENTE_JUBILA: agenteRest }))
-      } else {
-        records.push(mapAgenteToRecord(agenteRest))
-      }
-    }
-    return records
-  }
 
   try {
     await requireAuthenticatedSession()
@@ -436,6 +459,118 @@ export async function searchAgentes(query: string): Promise<JubilacionRecord[]> 
     }
   } catch (error) {
     logServerError('[searchAgentes] Error:', error)
+    throw new Error('Error al buscar agentes en la base de datos.')
+  }
+}
+
+/**
+ * Igual que searchAgentes, pero pensada para la grilla del panel principal.
+ *
+ * La diferencia es que NO corta cuando encuentra una coincidencia exacta:
+ * corre la pasada exacta y la parcial en paralelo, las une sin repetir agentes
+ * y las ordena por relevancia. Así, si hay apellidos exactamente "MIRA", la
+ * grilla muestra primero los "MIRA" y después los que solo contienen la palabra
+ * ("MIRANDA", "MIRAMON"), en lugar de quedarse únicamente con los exactos.
+ */
+export async function buscarAgentesParaGrilla(query: string): Promise<JubilacionRecord[]> {
+  const q = query.trim()
+
+  try {
+    await requireAuthenticatedSession()
+
+    if (!q) {
+      const agentes = await prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany({
+        where: { BIT_BORRADO: false },
+        include: includeClause,
+        orderBy: [{ APELLIDO_AGENTE: 'asc' }, { NOMBRE_AGENTE: 'asc' }],
+        take: 100,
+      })
+      return toRecords(agentes)
+    }
+
+    const cleanNumeric = q.replace(/[\.\s-]/g, '')
+    const isNumeric = /^\d+$/.test(cleanNumeric) && cleanNumeric.length > 0
+
+    if (isNumeric) {
+      // ── Búsqueda por DNI ──────────────────────────────────────────────────
+      const [exactos, parciales] = await Promise.all([
+        prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany({
+          where: { DNI_AGENTE: cleanNumeric, BIT_BORRADO: false },
+          include: includeClause,
+          take: 50,
+        }),
+        prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany({
+          where: { DNI_AGENTE: { contains: cleanNumeric }, BIT_BORRADO: false },
+          include: includeClause,
+          orderBy: { DNI_AGENTE: 'asc' },
+          take: 50,
+        }),
+      ])
+
+      const filas = combinarFilas(exactos, parciales, (fila) => {
+        const dni = fila.DNI_AGENTE ?? ''
+        if (dni === cleanNumeric) return 0
+        return dni.startsWith(cleanNumeric) ? 1 : 2
+      })
+      return toRecords(filas)
+    }
+
+    // ── Búsqueda por Apellido / Nombre ──────────────────────────────────────
+    // PostgreSQL LIKE distingue mayúsculas y acentos → se usa unaccent + ILIKE
+    const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+
+    const [idsExactos, idsParciales] = await Promise.all([
+      prisma.$queryRaw<{ id: number }[]>`
+        SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
+        FROM "DATOS_PERSONALES_AGENTE_JUBILA"
+        WHERE LOWER(unaccent("APELLIDO_AGENTE")) = LOWER(unaccent(${q}))
+          AND "BIT_BORRADO" = false
+        ORDER BY "APELLIDO_AGENTE" ASC
+        LIMIT 50
+      `,
+      prisma.$queryRaw<{ id: number }[]>`
+        SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
+        FROM "DATOS_PERSONALES_AGENTE_JUBILA"
+        WHERE (unaccent("APELLIDO_AGENTE") ILIKE unaccent('%' || ${q} || '%')
+           OR unaccent("NOMBRE_AGENTE") ILIKE unaccent('%' || ${q} || '%'))
+          AND "BIT_BORRADO" = false
+        ORDER BY "APELLIDO_AGENTE" ASC, "NOMBRE_AGENTE" ASC
+        LIMIT 50
+      `,
+    ])
+
+    const [agentesExactos, agentesParciales] = await Promise.all([
+      prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany({
+        where: { ID_DATOS_PERSONALES_AGENTE_JUBILA: { in: idsExactos.map((r) => r.id) }, BIT_BORRADO: false },
+        include: includeClause,
+      }),
+      prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany({
+        where: { ID_DATOS_PERSONALES_AGENTE_JUBILA: { in: idsParciales.map((r) => r.id) }, BIT_BORRADO: false },
+        include: includeClause,
+      }),
+    ])
+
+    // Devolver cada grupo en el mismo orden en que el SQL lo trajo, para que
+    // combinarFilas reordene por relevancia sobre una base estable.
+    const porId = <T extends { ID_DATOS_PERSONALES_AGENTE_JUBILA: number }>(ids: { id: number }[], filas: T[]) => {
+      const map = new Map(filas.map((f) => [f.ID_DATOS_PERSONALES_AGENTE_JUBILA, f]))
+      return ids.map((r) => map.get(r.id)).filter((f): f is T => Boolean(f))
+    }
+    const exactosOrdenados = porId(idsExactos, agentesExactos)
+    const parcialesOrdenados = porId(idsParciales, agentesParciales)
+
+    const qNorm = norm(q)
+    const filas = combinarFilas(exactosOrdenados, parcialesOrdenados, (fila) => {
+      const apellido = norm(fila.APELLIDO_AGENTE ?? '')
+      const nombre = norm(fila.NOMBRE_AGENTE ?? '')
+      if (apellido === qNorm) return 0
+      if (apellido.startsWith(qNorm)) return 1
+      if (nombre.startsWith(qNorm)) return 2
+      return 3
+    })
+    return toRecords(filas)
+  } catch (error) {
+    logServerError('[buscarAgentesParaGrilla] Error:', error)
     throw new Error('Error al buscar agentes en la base de datos.')
   }
 }
