@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { gunzipSync } from 'node:zlib'
 import { prisma } from '@/lib/prisma'
 import { Prisma } from '@prisma/client'
 import { calcEdadActual } from '@/lib/bulk-sync/processors'
@@ -35,6 +36,8 @@ import {
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
+
+const MAX_ANALISIS_DESCOMPRIMIDO = 128 * 1024 * 1024
 
 // Filas por sentencia SQL en la actualización masiva.
 // Tamaño de lote acotado para mantener las sentencias manejables y no estirar
@@ -94,9 +97,19 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
     // ── Leer análisis del body ──────────────────────────────────────────────
     let analysis: AnalysisResult
     try {
-      analysis = (await request.json()) as AnalysisResult
+      const contentType = request.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase()
+      if (contentType === 'application/gzip') {
+        const comprimido = Buffer.from(await request.arrayBuffer())
+        const json = gunzipSync(comprimido, { maxOutputLength: MAX_ANALISIS_DESCOMPRIMIDO })
+        analysis = JSON.parse(json.toString('utf8')) as AnalysisResult
+      } else {
+        analysis = (await request.json()) as AnalysisResult
+      }
     } catch {
-      return NextResponse.json({ ok: false, error: 'Body inválido.' }, { status: 400 })
+      return NextResponse.json(
+        { ok: false, error: 'Body inválido, comprimido corrupto o análisis superior a 128 MB.' },
+        { status: 400 },
+      )
     }
 
     if (!analysis?.datosPersonales || !analysis?.carreraAdministrativa) {

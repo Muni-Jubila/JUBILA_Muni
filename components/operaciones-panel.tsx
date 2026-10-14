@@ -15,6 +15,36 @@ import type { AnalysisResult, AnalyzeApiResponse, CommitApiResponse } from '@/li
 
 type OpMode = 'agregar-agente' | 'actualizacion-masiva'
 
+async function leerRespuestaJson<T>(response: Response): Promise<T> {
+  const texto = await response.text()
+  try {
+    return JSON.parse(texto) as T
+  } catch {
+    const resumen = texto.trim().replace(/\s+/g, ' ').slice(0, 180)
+    const estado = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`
+    throw new Error(`El servidor devolvió una respuesta no JSON (${estado})${resumen ? `: ${resumen}` : ''}`)
+  }
+}
+
+async function comprimirJsonParaEnvio(value: unknown): Promise<{ body: BodyInit; contentType: string }> {
+  const json = JSON.stringify(value)
+  const original = new Blob([json], { type: 'application/json' })
+  if (typeof CompressionStream === 'undefined') {
+    return { body: json, contentType: 'application/json' }
+  }
+
+  try {
+    const stream = original.stream().pipeThrough(new CompressionStream('gzip'))
+    const comprimido = await new Response(stream).blob()
+    if (comprimido.size < original.size) {
+      return { body: comprimido, contentType: 'application/gzip' }
+    }
+  } catch {
+    // Fallback a JSON normal en navegadores sin gzip usable.
+  }
+  return { body: json, contentType: 'application/json' }
+}
+
 interface OperacionesPanelProps {
   activeOp: OpMode | null
   onChangeOp: (op: OpMode) => void
@@ -1057,7 +1087,7 @@ function ActualizacionMasiva() {
       form.append('carreraAdministrativa', caEnviado)
 
       const res = await fetch('/api/bulk-sync/analyze', { method: 'POST', body: form })
-      const data: AnalyzeApiResponse = await res.json()
+      const data = await leerRespuestaJson<AnalyzeApiResponse>(res)
 
       if (!data.ok || !data.analysis) {
         setErrorMsg(data.error ?? 'Error durante el análisis.')
@@ -1085,12 +1115,13 @@ function ActualizacionMasiva() {
     setErrorMsg(null)
 
     try {
+      const solicitud = await comprimirJsonParaEnvio(analysis)
       const res = await fetch('/api/bulk-sync/commit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(analysis),
+        headers: { 'Content-Type': solicitud.contentType },
+        body: solicitud.body,
       })
-      const data: CommitApiResponse = await res.json()
+      const data = await leerRespuestaJson<CommitApiResponse>(res)
 
       if (!data.ok) {
         setErrorMsg(data.error ?? 'Error durante la actualización.')
