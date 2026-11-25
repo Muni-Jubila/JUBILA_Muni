@@ -72,7 +72,7 @@ export async function getAuthenticatedSession(): Promise<AuthenticatedSession | 
     where: { ID_SESION: decoded.sessionId },
     include: {
       USUARIO: {
-        include: { ROL_JUBILA: true, ROL_RETENCIONES: true },
+        include: { ROL_JUBILA: true },
       },
     },
   })
@@ -94,9 +94,9 @@ export async function getAuthenticatedSession(): Promise<AuthenticatedSession | 
     userId: session.ID_USUARIO,
     username: session.USUARIO.NOMBRE_USUARIO,
     role: session.USUARIO.ROL_JUBILA?.NOMBRE_ROL ?? '',
-    retencionesRole: session.USUARIO.ROL_RETENCIONES?.NOMBRE_ROL ?? null,
+    retencionesRole: null,
     mustChangePassword: session.USUARIO.DEBE_CAMBIAR_CONTRASENA,
-    jubila: session.USUARIO.JUBILA,
+    jubila: true,
   }
 }
 

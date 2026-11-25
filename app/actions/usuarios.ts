@@ -33,7 +33,6 @@ export async function listUsuarios(): Promise<UsuarioListado[]> {
   try {
     await requireAdmin()
     const usuarios = await prisma.uSUARIO.findMany({
-      where: { JUBILA: true },
       orderBy: { NOMBRE_USUARIO: 'asc' },
       select: {
         ID_USUARIO: true,
@@ -87,7 +86,6 @@ export async function crearUsuario(
         NOMBRE_USUARIO: nombre,
         CONTRASENA_USUARIO: hash,
         DEBE_CAMBIAR_CONTRASENA: true,
-        JUBILA: true,
         ID_ROL_JUBILA: rolJubila.ID_ROL_JUBILA,
       },
     })
@@ -126,7 +124,7 @@ export async function actualizarRolUsuario(id: number, rol: string): Promise<Res
     }
     if (rolNormalizado !== 'ADMIN' && target.ID_ROL_JUBILA === rolAdmin.ID_ROL_JUBILA) {
       const adminsRestantes = await prisma.uSUARIO.count({
-        where: { ID_ROL_JUBILA: rolAdmin.ID_ROL_JUBILA, JUBILA: true },
+        where: { ID_ROL_JUBILA: rolAdmin.ID_ROL_JUBILA },
       })
       if (adminsRestantes <= 1) {
         return { ok: false, error: 'Debe existir al menos un usuario ADMIN en el sistema.' }
@@ -184,7 +182,7 @@ export async function eliminarUsuario(id: number): Promise<RespuestaAccion> {
     }
     if (target.ROL_JUBILA?.NOMBRE_ROL === 'ADMIN') {
       const adminsRestantes = await prisma.uSUARIO.count({
-        where: { ID_ROL_JUBILA: target.ID_ROL_JUBILA, JUBILA: true },
+        where: { ID_ROL_JUBILA: target.ID_ROL_JUBILA },
       })
       if (adminsRestantes <= 1) {
         return { ok: false, error: 'Debe existir al menos un usuario ADMIN en el sistema.' }

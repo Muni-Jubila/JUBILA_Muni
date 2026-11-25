@@ -216,7 +216,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
           for (const lote of chunk(filasDp, FILAS_SQL_DP)) {
             operaciones.push(
               prisma.$executeRaw(Prisma.sql`
-                UPDATE "DATOS_PERSONALES_AGENTE_JUBILA" AS dp
+                UPDATE "COMUN_DATOS_PERSONALES_AGENTE_JUBILA" AS dp
                 SET
                   "NOMBRE_AGENTE" = v.nombre,
                   "SEGUNDO_NOMBRE_AGENTE" = v.segundoNombre,
@@ -301,7 +301,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
           for (const lote of chunk(filasCa, FILAS_SQL_CA)) {
             operaciones.push(
               prisma.$executeRaw(Prisma.sql`
-                UPDATE "CARRERA_ADMINISTRATIVA" AS c
+                UPDATE "COMUN_CARRERA_ADMINISTRATIVA" AS c
                 SET
                   "FECHA_BAJA" = v.fechaBaja,
                   "CAUSA_BAJA" = v.causaBaja
@@ -452,7 +452,7 @@ async function recalcularDerivadosDeTodosLosAgentes(usuarioId: number): Promise<
   // Una sentencia por lote, secuenciales: nunca hay más de 1 consulta en vuelo.
   for (const lote of chunk(filas, FILAS_SQL_RECALCULO)) {
     await prisma.$executeRaw(Prisma.sql`
-      UPDATE "DATOS_PERSONALES_AGENTE_JUBILA" AS dp
+      UPDATE "COMUN_DATOS_PERSONALES_AGENTE_JUBILA" AS dp
       SET
         "FECHA_ESTIMADA_JUBILACIÓN_ORDINARIA" = v.fechaEstimada,
         "EDAD_ESTIMACION_JUBILACION" = v.edadEstimada,

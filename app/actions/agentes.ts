@@ -414,7 +414,7 @@ export async function searchAgentes(query: string): Promise<JubilacionRecord[]> 
       // 1º Coincidencia exacta de apellido (sin diferenciar mayúsculas/acentos)
       const idsExactos = await prisma.$queryRaw<{ id: number }[]>`
         SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
-        FROM "DATOS_PERSONALES_AGENTE_JUBILA"
+        FROM "COMUN_DATOS_PERSONALES_AGENTE_JUBILA"
         WHERE LOWER(unaccent("APELLIDO_AGENTE")) = LOWER(unaccent(${q}))
           AND "BIT_BORRADO" = false
         ORDER BY "APELLIDO_AGENTE" ASC
@@ -434,7 +434,7 @@ export async function searchAgentes(query: string): Promise<JubilacionRecord[]> 
       // 2º Si no encuentra exacto, apellidos o nombres que contengan el texto
       const idsParciales = await prisma.$queryRaw<{ id: number }[]>`
         SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
-        FROM "DATOS_PERSONALES_AGENTE_JUBILA"
+        FROM "COMUN_DATOS_PERSONALES_AGENTE_JUBILA"
         WHERE (unaccent("APELLIDO_AGENTE") ILIKE unaccent('%' || ${q} || '%')
            OR unaccent("NOMBRE_AGENTE") ILIKE unaccent('%' || ${q} || '%'))
           AND "BIT_BORRADO" = false
@@ -522,7 +522,7 @@ export async function buscarAgentesParaGrilla(query: string): Promise<Jubilacion
     const [idsExactos, idsParciales] = await Promise.all([
       prisma.$queryRaw<{ id: number }[]>`
         SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
-        FROM "DATOS_PERSONALES_AGENTE_JUBILA"
+        FROM "COMUN_DATOS_PERSONALES_AGENTE_JUBILA"
         WHERE LOWER(unaccent("APELLIDO_AGENTE")) = LOWER(unaccent(${q}))
           AND "BIT_BORRADO" = false
         ORDER BY "APELLIDO_AGENTE" ASC
@@ -530,7 +530,7 @@ export async function buscarAgentesParaGrilla(query: string): Promise<Jubilacion
       `,
       prisma.$queryRaw<{ id: number }[]>`
         SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
-        FROM "DATOS_PERSONALES_AGENTE_JUBILA"
+        FROM "COMUN_DATOS_PERSONALES_AGENTE_JUBILA"
         WHERE (unaccent("APELLIDO_AGENTE") ILIKE unaccent('%' || ${q} || '%')
            OR unaccent("NOMBRE_AGENTE") ILIKE unaccent('%' || ${q} || '%'))
           AND "BIT_BORRADO" = false

@@ -53,7 +53,7 @@ export async function loginUsuario(
 
     const usuario = await prisma.uSUARIO.findUnique({
       where: { NOMBRE_USUARIO: username },
-      include: { ROL_JUBILA: true, ROL_RETENCIONES: true },
+      include: { ROL_JUBILA: true },
     })
 
     if (!usuario) {
@@ -70,7 +70,7 @@ export async function loginUsuario(
       recordLoginFailure(username, clientAddress)
       return { ok: false, error: 'Usuario o contraseña incorrectos.' }
     }
-    if (!usuario.JUBILA || !usuario.ROL_JUBILA) {
+    if (!usuario.ROL_JUBILA) {
       return { ok: false, error: 'Este usuario no tiene habilitado el acceso a JUBILA.' }
     }
 
@@ -100,9 +100,9 @@ export async function loginUsuario(
       username: usuario.NOMBRE_USUARIO,
       userId: usuario.ID_USUARIO,
       role: usuario.ROL_JUBILA.NOMBRE_ROL,
-      retencionesRole: usuario.ROL_RETENCIONES?.NOMBRE_ROL ?? null,
+      retencionesRole: null,
       mustChangePassword: usuario.DEBE_CAMBIAR_CONTRASENA || !tieneHashBcrypt,
-      jubila: usuario.JUBILA,
+      jubila: true,
     }
   } catch (error) {
     const errorId = randomUUID()
