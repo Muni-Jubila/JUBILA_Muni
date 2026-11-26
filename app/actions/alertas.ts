@@ -62,8 +62,8 @@ export async function getAlertasInvalidezProvisoria(): Promise<AlertaInvalidezPr
       JOIN "JUBILA_DATOS" j ON j."ID_JUBILA" = o."ID_JUBILA"
       JOIN "COMUN_DATOS_PERSONALES_AGENTE_JUBILA" d ON d."ID_DATOS_PERSONALES_AGENTE_JUBILA" = j."ID_AGENTE"
       WHERE o."FECHA_HASTA_PROVISORIA" IS NOT NULL
-        AND o."FECHA_HASTA_PROVISORIA" >= ${hoyUtc}::date
-        AND o."FECHA_HASTA_PROVISORIA" <= ${hasta90Utc}::date
+        AND o."FECHA_HASTA_PROVISORIA" >= CAST(${hoyUtc} AS date)
+        AND o."FECHA_HASTA_PROVISORIA" <= CAST(${hasta90Utc} AS date)
         -- Solo el ÚLTIMO bloque del agente (puede haber varias renovaciones)
         AND o."FECHA_HASTA_PROVISORIA" = (
           SELECT MAX(o2."FECHA_HASTA_PROVISORIA")
@@ -72,7 +72,7 @@ export async function getAlertasInvalidezProvisoria(): Promise<AlertaInvalidezPr
           WHERE j2."ID_AGENTE" = j."ID_AGENTE" AND o2."FECHA_HASTA_PROVISORIA" IS NOT NULL
         )
         -- Solo expedientes no borrados
-        AND j."BIT_BORRADO" = false
+        AND j."BIT_BORRADO" = 0
         -- Causa de baja del expediente JUBILA: SOLO "JUBILACION POR INVALIDEZ PROVISORIA" (ID 3)
         AND EXISTS (
           SELECT 1 FROM "JUBILA_HISTORIAL_CAUSA_BAJA" h

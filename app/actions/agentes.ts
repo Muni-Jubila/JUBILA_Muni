@@ -413,12 +413,11 @@ export async function searchAgentes(query: string): Promise<JubilacionRecord[]> 
       // PostgreSQL LIKE distingue mayúsculas y acentos → se usa unaccent + ILIKE
       // 1º Coincidencia exacta de apellido (sin diferenciar mayúsculas/acentos)
       const idsExactos = await prisma.$queryRaw<{ id: number }[]>`
-        SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
-        FROM "COMUN_DATOS_PERSONALES_AGENTE_JUBILA"
-        WHERE LOWER(unaccent("APELLIDO_AGENTE")) = LOWER(unaccent(${q}))
-          AND "BIT_BORRADO" = false
-        ORDER BY "APELLIDO_AGENTE" ASC
-        LIMIT 50
+        SELECT TOP 50 [ID_DATOS_PERSONALES_AGENTE_JUBILA] AS id
+        FROM [dbo].[COMUN_DATOS_PERSONALES_AGENTE_JUBILA]
+        WHERE [APELLIDO_AGENTE] COLLATE Latin1_General_CI_AI = ${q}
+          AND [BIT_BORRADO] = 0
+        ORDER BY [APELLIDO_AGENTE] ASC
       `
       if (idsExactos.length > 0) {
         const agentesExactos = await prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany({
@@ -433,13 +432,12 @@ export async function searchAgentes(query: string): Promise<JubilacionRecord[]> 
 
       // 2º Si no encuentra exacto, apellidos o nombres que contengan el texto
       const idsParciales = await prisma.$queryRaw<{ id: number }[]>`
-        SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
-        FROM "COMUN_DATOS_PERSONALES_AGENTE_JUBILA"
-        WHERE (unaccent("APELLIDO_AGENTE") ILIKE unaccent('%' || ${q} || '%')
-           OR unaccent("NOMBRE_AGENTE") ILIKE unaccent('%' || ${q} || '%'))
-          AND "BIT_BORRADO" = false
-        ORDER BY "APELLIDO_AGENTE" ASC, "NOMBRE_AGENTE" ASC
-        LIMIT 50
+        SELECT TOP 50 [ID_DATOS_PERSONALES_AGENTE_JUBILA] AS id
+        FROM [dbo].[COMUN_DATOS_PERSONALES_AGENTE_JUBILA]
+        WHERE ([APELLIDO_AGENTE] COLLATE Latin1_General_CI_AI LIKE '%' + ${q} + '%'
+           OR [NOMBRE_AGENTE] COLLATE Latin1_General_CI_AI LIKE '%' + ${q} + '%')
+          AND [BIT_BORRADO] = 0
+        ORDER BY [APELLIDO_AGENTE] ASC, [NOMBRE_AGENTE] ASC
       `
       const parciales = await prisma.dATOS_PERSONALES_AGENTE_JUBILA.findMany({
         where: { ID_DATOS_PERSONALES_AGENTE_JUBILA: { in: idsParciales.map((r) => r.id) }, BIT_BORRADO: false },
@@ -521,21 +519,19 @@ export async function buscarAgentesParaGrilla(query: string): Promise<Jubilacion
 
     const [idsExactos, idsParciales] = await Promise.all([
       prisma.$queryRaw<{ id: number }[]>`
-        SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
-        FROM "COMUN_DATOS_PERSONALES_AGENTE_JUBILA"
-        WHERE LOWER(unaccent("APELLIDO_AGENTE")) = LOWER(unaccent(${q}))
-          AND "BIT_BORRADO" = false
-        ORDER BY "APELLIDO_AGENTE" ASC
-        LIMIT 50
+        SELECT TOP 50 [ID_DATOS_PERSONALES_AGENTE_JUBILA] AS id
+        FROM [dbo].[COMUN_DATOS_PERSONALES_AGENTE_JUBILA]
+        WHERE [APELLIDO_AGENTE] COLLATE Latin1_General_CI_AI = ${q}
+          AND [BIT_BORRADO] = 0
+        ORDER BY [APELLIDO_AGENTE] ASC
       `,
       prisma.$queryRaw<{ id: number }[]>`
-        SELECT "ID_DATOS_PERSONALES_AGENTE_JUBILA" AS id
-        FROM "COMUN_DATOS_PERSONALES_AGENTE_JUBILA"
-        WHERE (unaccent("APELLIDO_AGENTE") ILIKE unaccent('%' || ${q} || '%')
-           OR unaccent("NOMBRE_AGENTE") ILIKE unaccent('%' || ${q} || '%'))
-          AND "BIT_BORRADO" = false
-        ORDER BY "APELLIDO_AGENTE" ASC, "NOMBRE_AGENTE" ASC
-        LIMIT 50
+        SELECT TOP 50 [ID_DATOS_PERSONALES_AGENTE_JUBILA] AS id
+        FROM [dbo].[COMUN_DATOS_PERSONALES_AGENTE_JUBILA]
+        WHERE ([APELLIDO_AGENTE] COLLATE Latin1_General_CI_AI LIKE '%' + ${q} + '%'
+           OR [NOMBRE_AGENTE] COLLATE Latin1_General_CI_AI LIKE '%' + ${q} + '%')
+          AND [BIT_BORRADO] = 0
+        ORDER BY [APELLIDO_AGENTE] ASC, [NOMBRE_AGENTE] ASC
       `,
     ])
 

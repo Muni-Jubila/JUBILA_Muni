@@ -216,7 +216,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
           for (const lote of chunk(filasDp, FILAS_SQL_DP)) {
             operaciones.push(
               prisma.$executeRaw(Prisma.sql`
-                UPDATE "COMUN_DATOS_PERSONALES_AGENTE_JUBILA" AS dp
+                UPDATE dp
                 SET
                   "NOMBRE_AGENTE" = v.nombre,
                   "SEGUNDO_NOMBRE_AGENTE" = v.segundoNombre,
@@ -232,33 +232,34 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
                   "NUMERO_TELEFONO" = v.telefono,
                   "CORREO_ELECTRONICO" = v.correo,
                   "ID_REGIMEN_JUBILATORIO" = v.idRegimen,
-                  "FECHA_ULTIMA_MODIFICACION" = now(),
+                  "FECHA_ULTIMA_MODIFICACION" = SYSUTCDATETIME(),
                   "USUARIO_ULTIMA_MODIFICACION" = ${session.userId}
-                FROM (
+                FROM [dbo].[COMUN_DATOS_PERSONALES_AGENTE_JUBILA] AS dp
+                JOIN (
                   VALUES ${Prisma.join(
                     lote.map(
                       (f) => Prisma.sql`(
-                        CAST(${f.dni} AS TEXT),
-                        CAST(${f.nombre} AS TEXT),
-                        CAST(${f.segundoNombre} AS TEXT),
-                        CAST(${f.apellido} AS TEXT),
-                        CAST(${f.segundoApellido} AS TEXT),
+                        CAST(${f.dni} AS NVARCHAR(500)),
+                        CAST(${f.nombre} AS NVARCHAR(500)),
+                        CAST(${f.segundoNombre} AS NVARCHAR(500)),
+                        CAST(${f.apellido} AS NVARCHAR(500)),
+                        CAST(${f.segundoApellido} AS NVARCHAR(500)),
                         CAST(${f.fechaNac} AS DATE),
-                        CAST(${f.secretaria} AS TEXT),
-                        CAST(${f.programa} AS TEXT),
-                        CAST(${f.cargo} AS TEXT),
-                        CAST(${f.sexo} AS TEXT),
-                        CAST(${f.estado} AS BOOLEAN),
-                        CAST(${f.cuil} AS TEXT),
-                        CAST(${f.telefono} AS TEXT),
-                        CAST(${f.correo} AS TEXT),
+                        CAST(${f.secretaria} AS NVARCHAR(500)),
+                        CAST(${f.programa} AS NVARCHAR(500)),
+                        CAST(${f.cargo} AS NVARCHAR(500)),
+                        CAST(${f.sexo} AS NVARCHAR(500)),
+                        CAST(${f.estado} AS BIT),
+                        CAST(${f.cuil} AS NVARCHAR(500)),
+                        CAST(${f.telefono} AS NVARCHAR(500)),
+                        CAST(${f.correo} AS NVARCHAR(500)),
                         CAST(${f.idRegimen} AS INTEGER)
                       )`,
                     ),
                     ',',
                   )}
                 ) AS v(dni, nombre, segundoNombre, apellido, segundoApellido, fechaNac, secretaria, programa, cargo, sexo, estado, cuil, telefono, correo, idRegimen)
-                WHERE dp."DNI_AGENTE" = v.dni
+                  ON dp."DNI_AGENTE" = v.dni
               `),
             )
           }
@@ -301,23 +302,24 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
           for (const lote of chunk(filasCa, FILAS_SQL_CA)) {
             operaciones.push(
               prisma.$executeRaw(Prisma.sql`
-                UPDATE "COMUN_CARRERA_ADMINISTRATIVA" AS c
+                UPDATE c
                 SET
                   "FECHA_BAJA" = v.fechaBaja,
                   "CAUSA_BAJA" = v.causaBaja
-                FROM (
+                FROM [dbo].[COMUN_CARRERA_ADMINISTRATIVA] AS c
+                JOIN (
                   VALUES ${Prisma.join(
                     lote.map(
                       (f) => Prisma.sql`(
                         CAST(${f.id} AS INTEGER),
-                        CAST(${f.fechaBaja} AS TIMESTAMP),
-                        CAST(${f.causaBaja} AS TEXT)
+                        CAST(${f.fechaBaja} AS DATETIME2),
+                        CAST(${f.causaBaja} AS NVARCHAR(500))
                       )`,
                     ),
                     ',',
                   )}
                 ) AS v(id, fechaBaja, causaBaja)
-                WHERE c."ID_CARRERA" = v.id
+                  ON c."ID_CARRERA" = v.id
               `),
             )
           }
@@ -452,29 +454,30 @@ async function recalcularDerivadosDeTodosLosAgentes(usuarioId: number): Promise<
   // Una sentencia por lote, secuenciales: nunca hay más de 1 consulta en vuelo.
   for (const lote of chunk(filas, FILAS_SQL_RECALCULO)) {
     await prisma.$executeRaw(Prisma.sql`
-      UPDATE "COMUN_DATOS_PERSONALES_AGENTE_JUBILA" AS dp
+      UPDATE dp
       SET
         "FECHA_ESTIMADA_JUBILACIÓN_ORDINARIA" = v.fechaEstimada,
         "EDAD_ESTIMACION_JUBILACION" = v.edadEstimada,
         "ANTIGUEDAD_RECIBO_CALC" = v.antiguedadRecibo,
         "ANTIGUEDAD_LICENCIAS_CALC" = v.antiguedadLicencias,
-        "FECHA_ULTIMA_MODIFICACION" = now(),
+        "FECHA_ULTIMA_MODIFICACION" = SYSUTCDATETIME(),
         "USUARIO_ULTIMA_MODIFICACION" = ${usuarioId}
-      FROM (
+      FROM [dbo].[COMUN_DATOS_PERSONALES_AGENTE_JUBILA] AS dp
+      JOIN (
         VALUES ${Prisma.join(
           lote.map(
             (f) => Prisma.sql`(
               CAST(${f.id} AS INTEGER),
               CAST(${f.fechaEstimada} AS DATE),
               CAST(${f.edadEstimada} AS INTEGER),
-              CAST(${f.antiguedadRecibo} AS TEXT),
-              CAST(${f.antiguedadLicencias} AS TEXT)
+              CAST(${f.antiguedadRecibo} AS NVARCHAR(500)),
+              CAST(${f.antiguedadLicencias} AS NVARCHAR(500))
             )`,
           ),
           ',',
         )}
       ) AS v(id, fechaEstimada, edadEstimada, antiguedadRecibo, antiguedadLicencias)
-      WHERE dp."ID_DATOS_PERSONALES_AGENTE_JUBILA" = v.id
+        ON dp."ID_DATOS_PERSONALES_AGENTE_JUBILA" = v.id
     `)
     const hechas = Math.min(filas.indexOf(lote[lote.length - 1]) + 1, filas.length)
     if (hechas % (FILAS_SQL_RECALCULO * 20) === 0 || hechas === filas.length) {
