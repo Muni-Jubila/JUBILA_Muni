@@ -39,18 +39,35 @@ export const maxDuration = 300
 
 const MAX_ANALISIS_DESCOMPRIMIDO = 128 * 1024 * 1024
 
-// Filas por sentencia SQL en la actualización masiva.
-// Tamaño de lote acotado para mantener las sentencias manejables y no estirar
-// el límite de parámetros de PostgreSQL (65535). Cuantas menos sentencias,
-// menos round-trips contra la DB (la transacción interactiva de Prisma
-// serializa todas las operaciones en UNA sola conexión).
-const FILAS_SQL_DP = 150
-const FILAS_SQL_CA = 450
+// ── Límite de parámetros de SQL Server ────────────────────────────────────────
+// SQL Server acepta un máximo de 2100 parámetros por request: cada
+// CAST(${...}) de una sentencia UPDATE ... FROM (VALUES ...) es un parámetro,
+// y en un createMany() cada columna de cada fila también lo es. Superar ese
+// límite hace fallar el request con el error 8003 ("The incoming request has
+// too many parameters"), que Prisma envuelve como P2010.
+// Por eso cada tamaño de lote se CALCULA a partir de un presupuesto de
+// parámetros, con margen para los slots que consume el driver.
+const MAX_PARAMETROS_SQLSERVER = 2100
+const MARGEN_PARAMETROS = 10
 
-// Filas por sentencia en el recálculo de derivados (post-commit).
-// Lotes grandes y ejecución secuencial: el pooler de Supabase admite 15 conexiones
-// en modo sesión, así que el recálculo debe usar UNA sola a la vez.
-const FILAS_SQL_RECALCULO = 500
+/** Filas por sentencia según los parámetros que consume cada fila, más los
+ *  fijos de la sentencia, para quedar bajo el límite de SQL Server. */
+function filasPorLote(paramsPorFila: number, paramsFijos = 0): number {
+  return Math.max(1, Math.floor((MAX_PARAMETROS_SQLSERVER - MARGEN_PARAMETROS - paramsFijos) / paramsPorFila))
+}
+
+// PASO 2 (UPDATE de datos personales): 15 CAST por fila + 1 fijo (USUARIO_ULTIMA_MODIFICACION).
+// Si agregás o quitás columnas del VALUES, actualizá el 15.
+const FILAS_SQL_DP = filasPorLote(15, 1)
+// PASO 4 (UPDATE de carrera administrativa): 3 CAST por fila, sin parámetros fijos.
+const FILAS_SQL_CA = filasPorLote(3)
+// Recálculo de derivados (post-commit): 5 CAST por fila + 1 fijo (USUARIO_ULTIMA_MODIFICACION).
+// Lotes grandes y ejecución secuencial: UNA sola consulta en vuelo por vez.
+const FILAS_SQL_RECALCULO = filasPorLote(5, 1)
+// PASO 1 (createMany de datos personales): 23 columnas por fila.
+const FILAS_CREATE_DP = filasPorLote(23)
+// PASO 3 (createMany de carrera administrativa): 4 columnas por fila.
+const FILAS_CREATE_CA = filasPorLote(4)
 
 /** Divide un array en lotes de tamaño `size`. */
 function chunk<T>(arr: readonly T[], size: number): T[][] {
@@ -176,9 +193,14 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
               USUARIO_ULTIMA_MODIFICACION: session.userId,
             }
           })
-          operaciones.push(
-            prisma.dATOS_PERSONALES_AGENTE_JUBILA.createMany({ data: nuevosData }),
-          )
+          // Un createMany por lote: cada INSERT multi-fila respeta el
+          // presupuesto de parámetros de SQL Server (PASO 1 se ejecuta
+          // completo dentro de la misma transacción, con rollback íntegro).
+          for (const lote of chunk(nuevosData, FILAS_CREATE_DP)) {
+            operaciones.push(
+              prisma.dATOS_PERSONALES_AGENTE_JUBILA.createMany({ data: lote }),
+            )
+          }
           dpInsertados = nuevosData.length
         }
 
@@ -218,22 +240,22 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
               prisma.$executeRaw(Prisma.sql`
                 UPDATE dp
                 SET
-                  "NOMBRE_AGENTE" = v.nombre,
-                  "SEGUNDO_NOMBRE_AGENTE" = v.segundoNombre,
-                  "APELLIDO_AGENTE" = v.apellido,
-                  "SEGUNDO_APELLIDO_AGENTE" = v.segundoApellido,
-                  "FECHA_NACIMIENTO" = v.fechaNac,
-                  "SECRETARIA" = v.secretaria,
-                  "PROGRAMA" = v.programa,
-                  "CARGO" = v.cargo,
-                  "SEXO" = v.sexo,
-                  "ESTADO_ACTIVO" = v.estado,
-                  "CUIL" = v.cuil,
-                  "NUMERO_TELEFONO" = v.telefono,
-                  "CORREO_ELECTRONICO" = v.correo,
-                  "ID_REGIMEN_JUBILATORIO" = v.idRegimen,
-                  "FECHA_ULTIMA_MODIFICACION" = SYSUTCDATETIME(),
-                  "USUARIO_ULTIMA_MODIFICACION" = ${session.userId}
+                  [NOMBRE_AGENTE] = v.nombre,
+                  [SEGUNDO_NOMBRE_AGENTE] = v.segundoNombre,
+                  [APELLIDO_AGENTE] = v.apellido,
+                  [SEGUNDO_APELLIDO_AGENTE] = v.segundoApellido,
+                  [FECHA_NACIMIENTO] = v.fechaNac,
+                  [SECRETARIA] = v.secretaria,
+                  [PROGRAMA] = v.programa,
+                  [CARGO] = v.cargo,
+                  [SEXO] = v.sexo,
+                  [ESTADO_ACTIVO] = v.estado,
+                  [CUIL] = v.cuil,
+                  [NUMERO_TELEFONO] = v.telefono,
+                  [CORREO_ELECTRONICO] = v.correo,
+                  [ID_REGIMEN_JUBILATORIO] = v.idRegimen,
+                  [FECHA_ULTIMA_MODIFICACION] = SYSUTCDATETIME(),
+                  [USUARIO_ULTIMA_MODIFICACION] = ${session.userId}
                 FROM [dbo].[COMUN_DATOS_PERSONALES_AGENTE_JUBILA] AS dp
                 JOIN (
                   VALUES ${Prisma.join(
@@ -259,7 +281,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
                     ',',
                   )}
                 ) AS v(dni, nombre, segundoNombre, apellido, segundoApellido, fechaNac, secretaria, programa, cargo, sexo, estado, cuil, telefono, correo, idRegimen)
-                  ON dp."DNI_AGENTE" = v.dni
+                  ON dp.[DNI_AGENTE] = v.dni
               `),
             )
           }
@@ -271,18 +293,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
         // (batch: createMany)
         // ────────────────────────────────────────────────────────────────────
         if (ca.nuevas.length > 0) {
-          operaciones.push(
-            prisma.cARRERA_ADMINISTRATIVA.createMany({
-              data: ca.nuevas.map((row) => ({
-                DOCUMENTO_EMPLEADO: row.dni,
-                FECHA_ALTA: new Date(row.fechaAltaISO),
-                FECHA_BAJA: row.fechaBajaISO ? new Date(row.fechaBajaISO) : null,
-                CAUSA_BAJA: row.causaBaja,
-                // FECHA_CREACION tiene DEFAULT NOW() en la DB
-              })),
-            }),
-          )
-          caInsertadas = ca.nuevas.length
+          const nuevasCa = ca.nuevas.map((row) => ({
+            DOCUMENTO_EMPLEADO: row.dni,
+            FECHA_ALTA: new Date(row.fechaAltaISO),
+            FECHA_BAJA: row.fechaBajaISO ? new Date(row.fechaBajaISO) : null,
+            CAUSA_BAJA: row.causaBaja,
+            // FECHA_CREACION tiene DEFAULT NOW() en la DB
+          }))
+          // Un createMany por lote, dentro de la misma transacción (rollback íntegro).
+          for (const lote of chunk(nuevasCa, FILAS_CREATE_CA)) {
+            operaciones.push(prisma.cARRERA_ADMINISTRATIVA.createMany({ data: lote }))
+          }
+          caInsertadas = nuevasCa.length
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -290,6 +312,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
         // IDENTIFICAR SIEMPRE por ID_CARRERA (nunca solo por DNI)
         // NUNCA tocar FECHA_CREACION de fases existentes.
         // UPDATE MASIVO con CAST explícito (misma técnica que PASO 2).
+        // FECHA_BAJA usa doble CAST vía NVARCHAR: Prisma enlaza los NULL como
+        // INT y SQL Server no permite CAST(INT AS DATETIME2) (error 529).
         // ────────────────────────────────────────────────────────────────────
         const filasCa = ca.actualizadas.map((row) => ({
           id: row.idCarrera,
@@ -304,28 +328,32 @@ export async function POST(request: NextRequest): Promise<NextResponse<CommitApi
               prisma.$executeRaw(Prisma.sql`
                 UPDATE c
                 SET
-                  "FECHA_BAJA" = v.fechaBaja,
-                  "CAUSA_BAJA" = v.causaBaja
+                  [FECHA_BAJA] = v.fechaBaja,
+                  [CAUSA_BAJA] = v.causaBaja
                 FROM [dbo].[COMUN_CARRERA_ADMINISTRATIVA] AS c
                 JOIN (
                   VALUES ${Prisma.join(
                     lote.map(
                       (f) => Prisma.sql`(
                         CAST(${f.id} AS INTEGER),
-                        CAST(${f.fechaBaja} AS DATETIME2),
+                        CAST(CAST(${f.fechaBaja} AS NVARCHAR(30)) AS DATETIME2),
                         CAST(${f.causaBaja} AS NVARCHAR(500))
                       )`,
                     ),
                     ',',
                   )}
                 ) AS v(id, fechaBaja, causaBaja)
-                  ON c."ID_CARRERA" = v.id
+                  ON c.[ID_CARRERA] = v.id
               `),
             )
           }
           caActualizadas = filasCa.length
         }
-      await prisma.$transaction(operaciones)
+      // Timeout holgado: con cargas de decenas de miles de filas (p. ej.
+      // 32K datos personales / 57K carrera) son cientos de sentencias en
+      // lote dentro de UNA transacción; el default de 5s no alcanza y
+      // abortaría con P2028 a mitad de carga (con rollback).
+      await prisma.$transaction(operaciones, { timeout: 240_000, maxWait: 10_000 })
 
     console.log(
       `[bulk-sync/commit] Transacción completada en ${((Date.now() - t0) / 1000).toFixed(1)}s — ` +
@@ -406,9 +434,9 @@ async function recalcularDerivadosDeTodosLosAgentes(usuarioId: number): Promise<
   // Consultas agrupadas en sentencias UPDATE ... FROM (VALUES ...) de
   // FILAS_SQL_RECALCULO filas: una sola conexión y pocas idas y vueltas a la DB.
   // Antes se armaba un prisma.update() por agente y se disparaban en tandas de
-  // CONCURRENCIA_RECALCULO consultas en vuelo (32.000+ updates). Con el pooler de
-  // Supabase (máx. 15 conexiones en modo sesión) eso terminaba en
-  // "FATAL: max clients reached in session mode" y el commit devolvía error.
+  // CONCURRENCIA_RECALCULO consultas en vuelo (32.000+ updates), lo que
+  // saturaba el pool de conexiones. Ahora: lotes por presupuesto de parámetros
+  // de SQL Server y ejecución secuencial (nunca más de 1 consulta en vuelo).
   const ahora = new Date()
   const filas: {
     id: number
@@ -452,23 +480,25 @@ async function recalcularDerivadosDeTodosLosAgentes(usuarioId: number): Promise<
   }
 
   // Una sentencia por lote, secuenciales: nunca hay más de 1 consulta en vuelo.
+  // fechaEstimada usa doble CAST vía NVARCHAR: Prisma enlaza los NULL como INT
+  // y SQL Server no permite CAST(INT AS DATE) (error 529); int→nvarchar→date sí.
   for (const lote of chunk(filas, FILAS_SQL_RECALCULO)) {
     await prisma.$executeRaw(Prisma.sql`
       UPDATE dp
       SET
-        "FECHA_ESTIMADA_JUBILACIÓN_ORDINARIA" = v.fechaEstimada,
-        "EDAD_ESTIMACION_JUBILACION" = v.edadEstimada,
-        "ANTIGUEDAD_RECIBO_CALC" = v.antiguedadRecibo,
-        "ANTIGUEDAD_LICENCIAS_CALC" = v.antiguedadLicencias,
-        "FECHA_ULTIMA_MODIFICACION" = SYSUTCDATETIME(),
-        "USUARIO_ULTIMA_MODIFICACION" = ${usuarioId}
+        [FECHA_ESTIMADA_JUBILACIÓN_ORDINARIA] = v.fechaEstimada,
+        [EDAD_ESTIMACION_JUBILACION] = v.edadEstimada,
+        [ANTIGUEDAD_RECIBO_CALC] = v.antiguedadRecibo,
+        [ANTIGUEDAD_LICENCIAS_CALC] = v.antiguedadLicencias,
+        [FECHA_ULTIMA_MODIFICACION] = SYSUTCDATETIME(),
+        [USUARIO_ULTIMA_MODIFICACION] = ${usuarioId}
       FROM [dbo].[COMUN_DATOS_PERSONALES_AGENTE_JUBILA] AS dp
       JOIN (
         VALUES ${Prisma.join(
           lote.map(
             (f) => Prisma.sql`(
               CAST(${f.id} AS INTEGER),
-              CAST(${f.fechaEstimada} AS DATE),
+              CAST(CAST(${f.fechaEstimada} AS NVARCHAR(30)) AS DATE),
               CAST(${f.edadEstimada} AS INTEGER),
               CAST(${f.antiguedadRecibo} AS NVARCHAR(500)),
               CAST(${f.antiguedadLicencias} AS NVARCHAR(500))
@@ -477,7 +507,7 @@ async function recalcularDerivadosDeTodosLosAgentes(usuarioId: number): Promise<
           ',',
         )}
       ) AS v(id, fechaEstimada, edadEstimada, antiguedadRecibo, antiguedadLicencias)
-        ON dp."ID_DATOS_PERSONALES_AGENTE_JUBILA" = v.id
+        ON dp.[ID_DATOS_PERSONALES_AGENTE_JUBILA] = v.id
     `)
     const hechas = Math.min(filas.indexOf(lote[lote.length - 1]) + 1, filas.length)
     if (hechas % (FILAS_SQL_RECALCULO * 20) === 0 || hechas === filas.length) {
